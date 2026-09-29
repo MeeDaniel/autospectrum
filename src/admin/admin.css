@@ -1,0 +1,21 @@
+.admin-shell{min-height:100vh;background:#f7f7f6;color:#1f2228}
+.admin-header{height:5.25rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:0 clamp(1.25rem,3vw,3rem);background:#fff;border-bottom:1px solid #e9e9eb}
+.admin-header-caption{color:#83858b;font-size:.8rem;font-weight:700;letter-spacing:.02em}
+.admin-layout{display:grid;grid-template-columns:minmax(13rem,16.5rem) minmax(0,1fr);min-height:calc(100vh - 5.25rem)}
+.admin-sidebar{display:flex;flex-direction:column;gap:2rem;background:#fff;border-right:1px solid #e9e9eb;padding:2rem .9rem 1.5rem}
+.admin-nav{display:grid;gap:.3rem}
+.admin-nav-link{display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:3rem;padding:.75rem 1rem;border-radius:.65rem;text-decoration:none;font-size:.92rem;font-weight:700;color:#5c6066;transition:background .15s,color .15s}
+.admin-nav-link:hover{background:#f7f7f6;color:#1f2228}
+.admin-nav-link.is-active{background:#fff0f0;color:#c5262d}
+.admin-nav-link span:last-child{font-size:.8rem;opacity:.7}
+.admin-sidebar-foot{margin-top:auto;padding:0 1rem;color:#9a9da2;font-size:.72rem}
+.admin-sidebar-foot span{color:#c5262d}
+.admin-main{width:100%;max-width:92rem;padding:clamp(1.5rem,3vw,3rem);min-width:0}
+.admin-page-heading{margin-bottom:2rem}
+.admin-page-heading .eyebrow{margin-bottom:.8rem}
+.admin-page-heading h1{margin:0;font-size:clamp(2rem,3.3vw,3rem);line-height:1.12;letter-spacing:-.05em}
+.admin-page-heading>p:last-child{margin:.7rem 0 0;color:#767a80;font-size:.94rem;line-height:1.5}
+.admin-page-content{min-width:0}
+.admin-empty-state{background:#fff;border:1px solid #ebebec;border-radius:1rem;padding:2.5rem;color:#767a80;box-shadow:0 .75rem 2.5rem rgba(24,27,35,.035)}
+@media(max-width:52rem){.admin-layout{grid-template-columns:minmax(0,1fr)}.admin-sidebar{border-right:0;border-bottom:1px solid #e9e9eb;padding:.6rem 1rem}.admin-nav{display:flex;overflow-x:auto;scrollbar-width:thin}.admin-nav-link{white-space:nowrap;min-height:2.7rem}.admin-sidebar-foot{display:none}.admin-main{padding:1.5rem 1rem}.admin-header{height:4.75rem}}
+@media(max-width:32rem){.admin-header-caption{display:none}.admin-nav-link span:last-child{display:none}}
