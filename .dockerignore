@@ -20,6 +20,7 @@ docker-compose.override.yml
 docker-compose.override.yaml
 secrets
 certs
+certbot
 .ssh
 **/secrets
 **/certs
@@ -32,3 +33,6 @@ certs
 **/*.key
 **/*.p12
 **/*.pfx
+*.dump
+*.dump.gz
+backup-*.sql.gz

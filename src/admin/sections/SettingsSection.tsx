@@ -1,41 +1,57 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { adminProvider, ScheduleConflictError } from '../../data/demo';
-import { formatMinute, parseMinute, validateSettings, type AdminSettings, type AdminSnapshot, type Interval } from '../../domain/admin';
+import { adminProvider, ScheduleConflictError } from '../../data/runtime';
+import { validateSettings, validDate, type AdminSettings, type AdminSnapshot } from '../../domain/admin';
 import { impactedBookings } from './section-model';
-import { ActionBar, Field, Notice, Panel, isDirty, messageOf, useUnsavedChanges } from './common';
+import { fromSettings, toSettings, type DayDraft, type ScheduleDraft } from './schedule-draft';
 import { ImpactWarning } from './CatalogSections';
+import { ActionBar, Field, Notice, Panel, isDirty, messageOf, useUnsavedChanges } from './common';
 
-type TimeDraft = { workStart: string; workEnd: string; breaks: { start: string; end: string }[] };
-function toDraft(settings: AdminSettings): TimeDraft {
-  return { workStart: formatMinute(settings.workStart), workEnd: formatMinute(settings.workEnd), breaks: settings.breaks.map(item => ({ start: formatMinute(item.start), end: formatMinute(item.end) })) };
-}
-function fromDraft(draft: TimeDraft): Pick<AdminSettings, 'workStart' | 'workEnd' | 'breaks'> | null {
-  try { return { workStart: parseMinute(draft.workStart), workEnd: parseMinute(draft.workEnd), breaks: draft.breaks.map(item => ({ start: parseMinute(item.start), end: parseMinute(item.end) })) }; }
-  catch { return null; }
+const weekdayNames = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+const freshDay = (): DayDraft => ({ closed: false, start: '09:00', end: '18:00', breaks: [] });
+
+function DayFields({ value, onChange }: { value: DayDraft; onChange: (next: DayDraft) => void }) {
+  return <div class="admin-stack">
+    <label class="admin-checkbox"><input type="checkbox" checked={value.closed} onChange={event => onChange({ ...value, closed: event.currentTarget.checked })} /> Выходной</label>
+    {!value.closed && <>
+      <div class="admin-form-grid">
+        <Field label="Начало"><input type="time" required value={value.start} onInput={event => onChange({ ...value, start: event.currentTarget.value })} /></Field>
+        <Field label="Конец"><input type="time" required value={value.end} onInput={event => onChange({ ...value, end: event.currentTarget.value })} /></Field>
+      </div>
+      <div class="admin-break-list">{value.breaks.map((pause, index) => <div class="admin-break-row" key={index}>
+        <Field label="Перерыв с"><input type="time" required value={pause.start} onInput={event => onChange({ ...value, breaks: value.breaks.map((item, at) => at === index ? { ...item, start: event.currentTarget.value } : item) })} /></Field>
+        <Field label="До"><input type="time" required value={pause.end} onInput={event => onChange({ ...value, breaks: value.breaks.map((item, at) => at === index ? { ...item, end: event.currentTarget.value } : item) })} /></Field>
+        <button type="button" class="admin-danger" onClick={() => onChange({ ...value, breaks: value.breaks.filter((_, at) => at !== index) })}>Удалить</button>
+      </div>)}</div>
+      <button type="button" class="button secondary" onClick={() => onChange({ ...value, breaks: [...value.breaks, { start: '', end: '' }] })}>+ Перерыв</button>
+    </>}
+  </div>;
 }
 
 export function SettingsSection({ snapshot, reload }: { snapshot: AdminSnapshot; reload: () => Promise<void> }) {
-  const [baseSettings, setBaseSettings] = useState<AdminSettings>(() => snapshot.settings);
-  const [draft, setDraft] = useState<TimeDraft>(() => toDraft(snapshot.settings));
+  const [base, setBase] = useState<AdminSettings>(() => snapshot.settings);
+  const [draft, setDraft] = useState<ScheduleDraft>(() => fromSettings(snapshot.settings));
+  const [newDate, setNewDate] = useState('');
   const [ack, setAck] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
-  const dirty = isDirty(toDraft(baseSettings), draft);
+  const dirty = isDirty(fromSettings(base), draft);
   useUnsavedChanges(dirty);
   useEffect(() => setAck(false), [draft]);
-  useEffect(() => setAck(false), [snapshot]);
   useEffect(() => {
-    if (!dirty && snapshot.settings.revision > baseSettings.revision) {
-      setBaseSettings(snapshot.settings);
-      setDraft(toDraft(snapshot.settings));
+    if (!dirty && snapshot.settings.revision > base.revision) {
+      setBase(snapshot.settings);
+      setDraft(fromSettings(snapshot.settings));
     }
-  }, [snapshot.settings, baseSettings.revision, dirty]);
-  const parsed = useMemo(() => fromDraft(draft), [draft]);
-  const validation = parsed ? validateSettings(parsed) : 'Проверьте формат времени';
+  }, [snapshot.settings, base.revision, dirty]);
+
+  const parsed = useMemo(() => { try { return toSettings(draft, base); } catch { return null; } }, [draft, base]);
+  const validation = parsed ? validateSettings(parsed) : 'Проверьте время работы и перерывы';
   const proposed = parsed && !validation ? { ...snapshot, settings: { ...snapshot.settings, ...parsed } } : null;
   const impacted = proposed ? impactedBookings(snapshot, proposed) : [];
-  const updateBreak = (index: number, patch: Partial<{ start: string; end: string }>) => setDraft(previous => ({ ...previous, breaks: previous.breaks.map((item, idx) => idx === index ? { ...item, ...patch } : item) }));
+  const updateWeekday = (day: number, value: DayDraft) => setDraft(previous => ({ ...previous, weekdays: { ...previous.weekdays, [day]: value } }));
+  const updateException = (date: string, value: DayDraft) => setDraft(previous => ({ ...previous, exceptions: { ...previous.exceptions, [date]: value } }));
+
   const save = async (event: Event) => {
     event.preventDefault(); setError(''); setSuccess('');
     if (!parsed || validation) { setError(validation || 'Проверьте расписание'); return; }
@@ -45,26 +61,27 @@ export function SettingsSection({ snapshot, reload }: { snapshot: AdminSnapshot;
       if (ack && JSON.stringify(await adminProvider.getSnapshot()) !== JSON.stringify(snapshot)) {
         setAck(false); await reload(); setError('Данные изменились. Проверьте затронутые записи и подтвердите повторно.'); return;
       }
-      const saved = await adminProvider.saveSettings({ ...parsed, revision: baseSettings.revision }, ack);
-      setBaseSettings(saved);
-      setDraft(toDraft(saved));
-      await reload();
-      setSuccess('Расписание сохранено.');
-    }
-    catch (cause) { if (cause instanceof ScheduleConflictError) { setAck(false); await reload(); } setError(messageOf(cause)); }
-    finally { setBusy(false); }
+      const saved = await adminProvider.saveSettings(parsed, ack);
+      setBase(saved); setDraft(fromSettings(saved));
+      await reload(); setSuccess('Расписание сохранено.');
+    } catch (cause) {
+      if (cause instanceof ScheduleConflictError) { setAck(false); await reload(); }
+      setError(messageOf(cause));
+    } finally { setBusy(false); }
   };
+
   return <div class="admin-stack">
-    {error && <Notice kind="error">{error} <button class="admin-inline-link" type="button" onClick={() => { void (async () => { const latest = await adminProvider.getSnapshot(); setBaseSettings(latest.settings); setDraft(toDraft(latest.settings)); await reload(); setError(''); })(); }}>Загрузить актуальные данные</button></Notice>}
-    {success && <Notice kind="success">{success}</Notice>}
-    <Panel><div class="admin-section-top"><div><h2>Ежедневный график</h2><p>Одинаковое расписание действует для всех категорий. Время обрабатывается с точностью до минуты.</p></div></div>
-      <form onSubmit={save}><div class="admin-form-grid admin-settings-hours"><Field label="Начало работы"><input type="time" step="60" required value={draft.workStart} onInput={event => setDraft({ ...draft, workStart: event.currentTarget.value })} /></Field><Field label="Конец работы"><input type="time" step="60" required value={draft.workEnd} onInput={event => setDraft({ ...draft, workEnd: event.currentTarget.value })} /></Field></div>
-        <div class="admin-settings-break-head"><div><h3>Перерывы</h3><p>Во время перерыва новые записи недоступны.</p></div><button type="button" class="button secondary" onClick={() => setDraft({ ...draft, breaks: [...draft.breaks, { start: '', end: '' }] })}>+ Добавить перерыв</button></div>
-        {draft.breaks.length === 0 ? <p class="admin-empty-small">Перерывы не заданы.</p> : <div class="admin-break-list">{draft.breaks.map((item, index) => <div class="admin-break-row" key={index}><span class="admin-break-index">{index + 1}</span><Field label="От"><input type="time" step="60" required value={item.start} onInput={event => updateBreak(index, { start: event.currentTarget.value })} /></Field><Field label="До"><input type="time" step="60" required value={item.end} onInput={event => updateBreak(index, { end: event.currentTarget.value })} /></Field><button type="button" class="admin-danger" onClick={() => setDraft({ ...draft, breaks: draft.breaks.filter((_, idx) => idx !== index) })}>Удалить</button></div>)}</div>}
-        {dirty && validation && <Notice kind="error">{validation}</Notice>}
-        {impacted.length > 0 && <ImpactWarning impacted={impacted} ack={ack} setAck={setAck} />}
-        <ActionBar><button class="button secondary" type="button" onClick={() => { setBaseSettings(snapshot.settings); setDraft(toDraft(snapshot.settings)); setError(''); }}>Отменить изменения</button><button class="button primary" type="submit" disabled={busy || !dirty}>{busy ? 'Сохраняем…' : 'Сохранить график'}</button></ActionBar>
-      </form>
-    </Panel>
+    {error && <Notice kind="error">{error}</Notice>}{success && <Notice kind="success">{success}</Notice>}
+    <form onSubmit={save} class="admin-stack">
+      <Panel><h2>График по дням недели</h2><p>Рабочее время и перерывы действуют для всех категорий.</p></Panel>
+      {weekdayNames.map((name, day) => <Panel key={day}><h3>{name}</h3><DayFields value={draft.weekdays[day]} onChange={value => updateWeekday(day, value)} /></Panel>)}
+      <Panel><h2>Отдельные даты</h2><p>Расписание даты полностью заменяет обычный график дня.</p>
+        <div class="admin-form-grid"><Field label="Дата"><input type="date" value={newDate} onInput={event => setNewDate(event.currentTarget.value)} /></Field><button type="button" class="button secondary" disabled={!validDate(newDate) || Boolean(draft.exceptions[newDate])} onClick={() => { if (validDate(newDate)) { updateException(newDate, freshDay()); setNewDate(''); } }}>+ Добавить дату</button></div>
+        {Object.entries(draft.exceptions).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => <div class="admin-stack" key={date}><div class="admin-section-top"><h3>{date}</h3><button type="button" class="admin-danger" onClick={() => setDraft(previous => ({ ...previous, exceptions: Object.fromEntries(Object.entries(previous.exceptions).filter(([key]) => key !== date)) }))}>Удалить исключение</button></div><DayFields value={value} onChange={next => updateException(date, next)} /></div>)}
+      </Panel>
+      {dirty && validation && <Notice kind="error">{validation}</Notice>}
+      {impacted.length > 0 && <ImpactWarning impacted={impacted} ack={ack} setAck={setAck} />}
+      <ActionBar><button class="button secondary" type="button" onClick={() => { setDraft(fromSettings(snapshot.settings)); setBase(snapshot.settings); setError(''); }}>Отменить изменения</button><button class="button primary" type="submit" disabled={!dirty || busy}>{busy ? 'Сохраняем…' : 'Сохранить график'}</button></ActionBar>
+    </form>
   </div>;
 }

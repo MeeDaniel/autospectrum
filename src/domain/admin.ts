@@ -1,12 +1,13 @@
-export type BookingStatus = 'new' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+export type BookingStatus = 'new' | 'confirmed' | 'completed' | 'cancelled';
 export type Interval = { start: number; end: number };
+export type DaySchedule = { closed: boolean; workStart: number; workEnd: number; breaks: Interval[] };
 export type AdminCategory = { id: string; name: string; lineCount: number; archived: boolean; revision: number };
 export type AdminService = { id: string; categoryId: string; name: string; priceFrom: number; durationMinutes: number; archived: boolean; revision: number };
 export type AdminBooking = {
   id: string; serviceId: string; date: string; startMinute: number; durationMinutes: number;
   name: string; phone: string; car: string; comment: string; status: BookingStatus; revision: number;
 };
-export type AdminSettings = { workStart: number; workEnd: number; breaks: Interval[]; revision: number };
+export type AdminSettings = { workStart: number; workEnd: number; breaks: Interval[]; weekdays?: Partial<Record<number, DaySchedule>>; exceptions?: Record<string, DaySchedule>; revision: number };
 export type AdminSnapshot = { categories: AdminCategory[]; services: AdminService[]; bookings: AdminBooking[]; settings: AdminSettings };
 export type CategoryInput = Omit<AdminCategory, 'id' | 'revision' | 'archived'> & { id?: string; revision?: number };
 export type ServiceInput = Omit<AdminService, 'id' | 'revision' | 'archived'> & { id?: string; revision?: number };
@@ -31,14 +32,29 @@ export function validDate(value: string): boolean {
   const date = new Date(`${value}T12:00:00Z`);
   return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
 }
-export function validateSettings(settings: Pick<AdminSettings, 'workStart' | 'workEnd' | 'breaks'>): string | null {
+export function validateSettings(settings: Pick<AdminSettings, 'workStart' | 'workEnd' | 'breaks'> & Partial<AdminSettings>): string | null {
   if (!validMinute(settings.workStart) || !validMinute(settings.workEnd) || settings.workStart >= settings.workEnd) return 'Проверьте рабочие часы';
   const breaks = [...settings.breaks].sort((a, b) => a.start - b.start);
   for (let index = 0; index < breaks.length; index++) {
     const item = breaks[index];
     if (!validMinute(item.start) || !validMinute(item.end) || item.start < settings.workStart || item.end > settings.workEnd || item.start >= item.end || (index > 0 && breaks[index - 1].end > item.start)) return 'Проверьте перерывы';
   }
+  const validDay = (day: DaySchedule): boolean => day.closed
+    ? day.breaks.length === 0
+    : validateSettings({ workStart: day.workStart, workEnd: day.workEnd, breaks: day.breaks }) === null;
+  for (const [weekday, day] of Object.entries(settings.weekdays ?? {})) {
+    if (!/^[0-6]$/.test(weekday) || !day || !validDay(day)) return 'Проверьте расписание по дням недели';
+  }
+  for (const [date, day] of Object.entries(settings.exceptions ?? {})) {
+    if (!validDate(date) || !validDay(day)) return 'Проверьте исключения по датам';
+  }
   return null;
+}
+export function scheduleForDate(settings: AdminSettings, date: string): DaySchedule {
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+  return settings.exceptions?.[date]
+    ?? settings.weekdays?.[weekday]
+    ?? { closed: false, workStart: settings.workStart, workEnd: settings.workEnd, breaks: settings.breaks };
 }
 export function occupiesCapacity(status: BookingStatus): boolean { return status !== 'cancelled' && status !== 'completed'; }
 
@@ -50,10 +66,11 @@ export function assessBooking(booking: BookingInput, snapshot: AdminSnapshot): C
   const start = booking.startMinute;
   const end = start + booking.durationMinutes;
   const conflicts: Conflict[] = [];
-  if (start < snapshot.settings.workStart || end > snapshot.settings.workEnd || end > 1439) {
+  const schedule = scheduleForDate(snapshot.settings, booking.date);
+  if (schedule.closed || start < schedule.workStart || end > schedule.workEnd || end > 1439) {
     conflicts.push({ kind: 'hours', bookingIds: [], start, end });
   }
-  for (const pause of snapshot.settings.breaks) {
+  for (const pause of schedule.breaks) {
     if (start < pause.end && pause.start < end) conflicts.push({ kind: 'break', bookingIds: [], start: Math.max(start, pause.start), end: Math.min(end, pause.end) });
   }
   const related = snapshot.bookings.filter(other => other.id !== booking.id && other.date === booking.date && occupiesCapacity(other.status) && snapshot.services.find(item => item.id === other.serviceId)?.categoryId === category.id && other.startMinute < end && start < other.startMinute + other.durationMinutes);

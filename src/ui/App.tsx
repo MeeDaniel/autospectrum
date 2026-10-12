@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { emptyDraft, normalizePhone, validateDraft } from '../domain/booking';
 import { formatMinute } from '../domain/admin';
 import type { Availability, BookingDraft, Service, SubmissionResult } from '../domain/booking';
-import { adminProvider, provider, SubmissionRejectedError } from '../data/demo';
+import { adminProvider, provider, SubmissionRejectedError } from '../data/runtime';
 import { goTo, routeFromHash, shiftMonth, type Route } from './navigation';
 
 const draftKey = 'autospectrum.booking.draft';

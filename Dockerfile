@@ -1,18 +1,24 @@
-FROM node:22-alpine AS build
+FROM node:24-alpine AS build
 
 WORKDIR /app
-
 COPY package.json package-lock.json ./
 RUN npm ci
+COPY . .
+RUN npm run build && npm run server:build
 
-COPY index.html vite.config.ts tsconfig.json ./
-COPY admin/ ./admin/
-COPY public/ ./public/
-COPY src/ ./src/
-RUN npm run build
-
-FROM nginx:stable-alpine
-
+FROM nginx:stable-alpine AS web
 COPY --from=build /app/dist/ /usr/share/nginx/html/
+COPY deploy/nginx.conf /etc/nginx/templates/default.conf.template
+EXPOSE 80 443
 
-EXPOSE 80
+FROM node:24-alpine AS api
+ENV NODE_ENV=production PORT=3000
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=build /app/server/ ./server/
+COPY --from=build /app/src/ ./src/
+COPY --from=build /app/tsconfig.server.json ./tsconfig.server.json
+USER node
+EXPOSE 3000
+CMD ["npm", "run", "server:start"]

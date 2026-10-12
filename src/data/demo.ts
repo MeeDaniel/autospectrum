@@ -16,6 +16,7 @@ export interface BookingProvider {
 
 export interface AdminProvider {
   getSnapshot(): Promise<AdminSnapshot>;
+  listBookings(filters?: { from?: string; to?: string; status?: AdminBooking['status'] }, limit?: number, cursor?: string): Promise<{ bookings: AdminBooking[]; total: number; nextCursor: string | null; conflicts: Record<string, Conflict[]> }>;
   previewBooking(input: BookingInput): Promise<Conflict[]>;
   saveBooking(input: BookingInput, allowConflicts?: boolean): Promise<AdminBooking>;
   deleteBooking(id: string, revision: number): Promise<void>;
@@ -99,6 +100,14 @@ function throwOnImpact(before: AdminSnapshot, after: AdminSnapshot, allow: boole
 
 export function createDemoProviders(store: DemoStore): { provider: BookingProvider; adminProvider: AdminProvider } {
   const adminProvider: AdminProvider = {
+    async listBookings(filters = {}, limit = 50, cursor) {
+      const snapshot = await store.read();
+      const rows = snapshot.bookings.filter(item => (!filters.from || item.date >= filters.from) && (!filters.to || item.date <= filters.to) && (!filters.status || item.status === filters.status))
+        .sort((a, b) => b.date.localeCompare(a.date) || b.startMinute - a.startMinute || b.id.localeCompare(a.id));
+      const offset = cursor ? Number(cursor) : 0;
+      const bookings = rows.slice(offset, offset + limit);
+      return { bookings, total: rows.length, nextCursor: offset + limit < rows.length ? String(offset + limit) : null, conflicts: Object.fromEntries(bookings.map(item => [item.id, assessBooking(item, snapshot)])) };
+    },
     getSnapshot: () => store.read(),
     async previewBooking(input) {
       assertBooking(input);
@@ -186,7 +195,7 @@ export function createDemoProviders(store: DemoStore): { provider: BookingProvid
         const error = validateSettings(input);
         if (error) throw new Error(error);
         const before = copyDemoValue(snapshot);
-        const saved: AdminSettings = { workStart: input.workStart, workEnd: input.workEnd, breaks: input.breaks.map(item => ({ ...item })), revision: input.revision + 1 };
+        const saved: AdminSettings = { workStart: input.workStart, workEnd: input.workEnd, breaks: input.breaks.map(item => ({ ...item })), weekdays: input.weekdays, exceptions: input.exceptions, revision: input.revision + 1 };
         snapshot.settings = saved;
         throwOnImpact(before, snapshot, allowConflicts);
         return saved;

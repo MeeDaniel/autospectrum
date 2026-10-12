@@ -39,4 +39,18 @@ describe('minute schedule', () => {
     expect(validateSettings({ ...snapshot.settings, breaks: [{ start: 530, end: 560 }] })).toBeTruthy();
     expect(validateSettings(snapshot.settings)).toBeNull();
   });
+
+  it('uses the weekly schedule and a date exception for conflicts', () => {
+    const weekly = {
+      ...snapshot,
+      settings: {
+        ...snapshot.settings,
+        weekdays: { 4: { closed: false, workStart: 600, workEnd: 900, breaks: [] } },
+        exceptions: { '2026-10-01': { closed: true, workStart: 0, workEnd: 0, breaks: [] } },
+      },
+    };
+    expect(assessBooking(booking('x', 630), weekly).map(item => item.kind)).toContain('hours');
+    expect(assessBooking({ ...booking('x', 630), date: '2026-10-08' }, weekly).map(item => item.kind)).not.toContain('hours');
+    expect(assessBooking({ ...booking('x', 540), date: '2026-10-08' }, weekly).map(item => item.kind)).toContain('hours');
+  });
 });

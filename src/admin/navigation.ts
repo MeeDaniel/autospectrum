@@ -1,10 +1,11 @@
-export type AdminSection = 'bookings' | 'services' | 'categories' | 'settings';
+export type AdminSection = 'bookings' | 'services' | 'categories' | 'settings' | 'audit';
 
 export const adminSections: ReadonlyArray<{ id: AdminSection; label: string; description: string }> = [
   { id: 'bookings', label: 'Записи', description: 'Просмотр и управление заявками' },
   { id: 'services', label: 'Услуги', description: 'Прайс и продолжительность работ' },
   { id: 'categories', label: 'Категории', description: 'Направления и рабочие линии' },
   { id: 'settings', label: 'Настройки', description: 'Рабочие часы и перерывы' },
+  { id: 'audit', label: 'История действий', description: 'Изменения, внесённые сотрудниками' },
 ];
 
 export function adminRouteFromHash(hash: string): AdminSection {

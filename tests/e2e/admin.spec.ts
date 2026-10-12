@@ -11,6 +11,7 @@ test('operator sees a public request, confirms an overlap, then resolves it', as
   await page.getByRole('button', { name: '10:00' }).click();
   await page.getByRole('button', { name: 'Выбрать', exact: true }).click();
   const selectedDate = await page.evaluate(() => JSON.parse(sessionStorage.getItem('autospectrum.booking.draft')!).date as string);
+  expect(selectedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   await page.getByRole('button', { name: 'Далее' }).click();
   await page.getByRole('button', { name: 'Отправить' }).click();
   await expect(page.getByText('Вы записаны')).toBeVisible();
@@ -29,6 +30,7 @@ test('operator sees a public request, confirms an overlap, then resolves it', as
   const editor = page.getByRole('dialog', { name: 'Новая запись' });
   await editor.getByLabel('Услуга').selectOption('diagnostics');
   await editor.getByLabel('Дата').fill(selectedDate);
+  await expect(editor.getByLabel('Дата')).toHaveValue(selectedDate);
   await editor.getByLabel('Время').fill('10:00');
   await editor.getByLabel('Имя клиента').fill('Мария Тестовая');
   await editor.getByLabel('Телефон').fill('89997654321');
@@ -68,13 +70,14 @@ test('operator edits the catalog and schedule and sees affected requests', async
   await expect(page.getByText('Полировка')).toBeVisible();
 
   await page.getByRole('link', { name: 'Настройки' }).click();
-  await page.getByRole('button', { name: '+ Добавить перерыв' }).click();
-  await page.locator('.admin-break-row').last().getByLabel('От', { exact: true }).fill('15:00');
-  await page.locator('.admin-break-row').last().getByLabel('До', { exact: true }).fill('15:30');
+  const monday = page.locator('.admin-panel').filter({ has: page.getByRole('heading', { name: 'Понедельник' }) });
+  await monday.getByRole('button', { name: '+ Перерыв' }).click();
+  await monday.locator('.admin-break-row').last().getByLabel('Перерыв с').fill('15:00');
+  await monday.locator('.admin-break-row').last().getByLabel('До', { exact: true }).fill('15:30');
   await page.getByRole('button', { name: 'Сохранить график' }).click();
   await expect(page.getByText('Расписание сохранено.')).toBeVisible();
   await page.reload();
-  await expect(page.locator('.admin-break-row').last().getByLabel('От', { exact: true })).toHaveValue('15:00');
+  await expect(monday.locator('.admin-break-row').last().getByLabel('Перерыв с')).toHaveValue('15:00');
 });
 
 test('admin sections remain usable with large text on a narrow screen', async ({ page }) => {
@@ -84,7 +87,7 @@ test('admin sections remain usable with large text on a narrow screen', async ({
   for (const section of ['bookings', 'services', 'categories', 'settings']) {
     await page.goto(`/admin/#/${section}`);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    const overflow = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth, elements: [...document.querySelectorAll('*')].filter(element => element.getBoundingClientRect().right > innerWidth + 1).slice(0, 12).map(element => `${element.tagName}.${element.className}: ${Math.round(element.getBoundingClientRect().right)}`), boxes: ['html', 'body', '.admin-shell', '.admin-layout', '.admin-sidebar', '.admin-nav', '.admin-main'].map(selector => { const item = document.querySelector(selector)!; return `${selector}:${Math.round(item.getBoundingClientRect().width)}/${item.scrollWidth}/${getComputedStyle(item).overflowX}`; }) }));
+    const overflow = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth, elements: [...document.querySelectorAll('.admin-main *')].filter(element => element.scrollWidth > element.clientWidth + 1).slice(0, 12).map(element => `${element.tagName}.${element.className}: ${element.clientWidth}/${element.scrollWidth}/${getComputedStyle(element).overflowX}`), boxes: ['html', 'body', '.admin-shell', '.admin-layout', '.admin-sidebar', '.admin-nav', '.admin-main'].map(selector => { const item = document.querySelector(selector)!; return `${selector}:${Math.round(item.getBoundingClientRect().width)}/${item.scrollWidth}/${getComputedStyle(item).overflowX}`; }) }));
     expect(overflow.scroll <= overflow.width, `${section}: ${JSON.stringify(overflow)}`).toBe(true);
   }
 });
@@ -121,14 +124,15 @@ test('a settings editor cannot overwrite a newer change from another tab', async
   const second = await context.newPage();
   await first.goto('/admin/#/settings');
   await second.goto('/admin/#/settings');
-  await first.getByLabel('Начало работы').fill('10:00');
-  await second.getByLabel('Начало работы').fill('11:00');
+  const monday = (page: typeof first) => page.locator('.admin-panel').filter({ has: page.getByRole('heading', { name: 'Понедельник' }) });
+  await monday(first).getByLabel('Начало').fill('10:00');
+  await monday(second).getByLabel('Начало').fill('11:00');
   await second.getByRole('button', { name: 'Сохранить график' }).click();
   await expect(second.getByText('Расписание сохранено.')).toBeVisible();
   await first.getByRole('button', { name: 'Сохранить график' }).click();
   await expect(first.getByText(/Данные изменились/)).toBeVisible();
   await second.reload();
-  await expect(second.getByLabel('Начало работы')).toHaveValue('11:00');
+  await expect(monday(second).getByLabel('Начало')).toHaveValue('11:00');
 });
 
 test('booking dialog traps keyboard focus and closes on Escape', async ({ page }) => {

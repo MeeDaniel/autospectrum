@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { adminProvider, ScheduleConflictError } from '../../data/demo';
+import { adminProvider, ScheduleConflictError } from '../../data/runtime';
 import type { AdminCategory, AdminService, AdminSnapshot, CategoryInput, ServiceInput } from '../../domain/admin';
 import { impactedBookings } from './section-model';
 import { ActionBar, Field, Notice, Panel, confirmDiscard, isDirty, messageOf, useModalFocus, useUnsavedChanges } from './common';

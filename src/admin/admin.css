@@ -1,6 +1,8 @@
 .admin-shell{min-height:100vh;background:#f7f7f6;color:#1f2228}
 .admin-header{height:5.25rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:0 clamp(1.25rem,3vw,3rem);background:#fff;border-bottom:1px solid #e9e9eb}
 .admin-header-caption{color:#83858b;font-size:.8rem;font-weight:700;letter-spacing:.02em}
+.admin-header-session{display:flex;align-items:center;gap:1rem}.admin-logout{border:1px solid #e4e4e6;border-radius:.55rem;background:#fff;padding:.55rem .8rem;color:#923035;font:inherit;font-size:.85rem;font-weight:700;cursor:pointer}.admin-logout:disabled{opacity:.5;cursor:not-allowed}
+.admin-auth{min-height:100vh;display:grid;place-items:center;padding:1.5rem;background:#f7f7f6;color:#1f2228}.admin-auth-card{display:grid;gap:1.1rem;width:min(100%,27rem);padding:clamp(1.5rem,4vw,2.5rem);border:1px solid #ebebec;border-radius:1rem;background:#fff;box-shadow:0 .75rem 2.5rem rgba(24,27,35,.06)}.admin-auth-card .brand-mark{margin-bottom:.2rem}.admin-auth-card .eyebrow{margin:0}.admin-auth-card h1{margin:0;font-size:2rem;letter-spacing:-.04em}.admin-auth-card>p:not(.eyebrow){margin:0;color:#666c73;line-height:1.5}.admin-auth-card .button{width:100%;justify-content:center}.admin-auth-error{color:#a1262e;background:#fff0f0;border-radius:.6rem;padding:.8rem 1rem;line-height:1.4}.admin-audit-filter{max-width:18rem}
 .admin-layout{display:grid;grid-template-columns:minmax(13rem,16.5rem) minmax(0,1fr);min-height:calc(100vh - 5.25rem)}
 .admin-sidebar{display:flex;flex-direction:column;gap:2rem;background:#fff;border-right:1px solid #e9e9eb;padding:2rem .9rem 1.5rem}
 .admin-nav{display:grid;gap:.3rem}
