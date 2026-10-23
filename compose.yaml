@@ -1,6 +1,85 @@
+x-api-environment: &api-environment
+  NODE_ENV: production
+  PORT: "3000"
+  DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+
 services:
-  web:
-    build: .
-    ports:
-      - "8080:80"
+  db:
+    image: postgres:18-alpine
     restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  migrate:
+    image: ${API_IMAGE:?Set API_IMAGE in .env}
+    build:
+      context: .
+      target: api
+    environment: *api-environment
+    command: ["npm", "run", "server:migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+    restart: "no"
+
+  api:
+    image: ${API_IMAGE:?Set API_IMAGE in .env}
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    environment: *api-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/readyz').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    networks: [internal]
+
+  web:
+    image: ${WEB_IMAGE:?Set WEB_IMAGE in .env}
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+      NGINX_ENVSUBST_FILTER: "^DOMAIN$"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./certbot:/var/www/certbot:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [public, internal]
+
+networks:
+  public:
+  internal:
+    internal: true
+
+volumes:
+  postgres_data:

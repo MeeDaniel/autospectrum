@@ -1,56 +1,136 @@
-# АвтоСпектр — запись и панель оператора
+# АвтоСпектр
 
-Два отдельных фронтенда на Preact и TypeScript: публичная форма `/` и панель оператора `/admin/`. Сборка создаёт оба входа в `dist/`. Админ-панель не входит в клиентское SPA.
+Запись в автосервис: публичная форма на `/`, панель оператора на `/admin/`, API на `/api/`. Фронтенд собирается из двух отдельных входов Vite. Рабочие данные хранятся в PostgreSQL; сервер проверяет расписание и права доступа.
 
-## Запуск
+## Локальная разработка
 
-```powershell
-npm install
+```bash
+npm ci
 npm run dev
-```
-
-Откройте `/` для записи и `/admin/` для управления услугами, категориями, записями и ежедневным расписанием. Разделы админки используют собственные hash-маршруты, например `/admin/#/bookings`.
-
-Проверки:
-
-```powershell
 npm test
 npm run build
-npm run test:e2e
+npm run server:build
 ```
 
-Для e2e нужен установленный Google Chrome. Тесты сами запускают локальный сервер на порту 4173.
+Команда `npm run test:e2e` запускает браузерные тесты; для неё нужен Google Chrome. Серверные команды и переменные окружения находятся в `package.json` и `.env.example`.
 
-## Тестовый деплой через Docker
+## Развёртывание на одном VPS
 
-На VPS установите Docker с Compose и получите свежую версию проекта. Node.js на VPS не нужен: сборка выполняется внутри Docker с Node.js 22.
+Нужны Linux VPS с Docker Engine и Compose plugin, домен с A/AAAA записью на VPS, открытые TCP 80/443, Certbot и внешний S3-совместимый бакет. PostgreSQL и API находятся только во внутренней сети Docker; наружу опубликованы лишь порты Nginx. Docker volume `postgres_data` хранит базу между обновлениями контейнеров. Не используйте `docker compose down -v` на рабочем сервере.
+
+Сборку образов лучше выполнять в CI или на рабочей машине: на небольшом VPS достаточно скачать образы. Для Linux/amd64:
 
 ```bash
-git pull origin main
-docker compose up -d --build
+docker buildx build --platform linux/amd64 --target api -t ghcr.io/your-org/autospectrum-api:<git-sha> --push .
+docker buildx build --platform linux/amd64 --target web -t ghcr.io/your-org/autospectrum-web:<git-sha> --push .
 ```
 
-Если домен `meevpn.mooo.com` указывает на VPS и входящий порт `8080` открыт, публичная форма доступна по адресу `http://meevpn.mooo.com:8080/`, а панель оператора — по адресу `http://meevpn.mooo.com:8080/admin/`. Для проверки на VPS:
+Замените `linux/amd64` на `linux/arm64` для ARM VPS. В `WEB_IMAGE` и `API_IMAGE` используйте опубликованные неизменяемые теги или digest. Если сборка на VPS допустима, используйте `docker compose up -d --build` вместо загрузки образов.
+
+На сервере разместите проект, например в `/opt/autospectrum`, и создайте конфигурацию:
 
 ```bash
-curl -I http://localhost:8080/
-curl -I http://localhost:8080/admin/
+cd /opt/autospectrum
+cp .env.example .env
+chmod 600 .env
 ```
 
-Остановить контейнер: `docker compose down`. Это тестовый HTTP-деплой без входа по паролю: `/admin/` доступна каждому, кто знает адрес. Используйте только демонстрационные данные. Данные и изменения в панели хранятся в браузере каждого посетителя и не синхронизируются между устройствами.
+Укажите настоящий `DOMAIN`, уникальный `POSTGRES_PASSWORD`, одинаковый пароль в `POSTGRES_PASSWORD` и `DATABASE_URL`, и опубликованные образы. Если пароль содержит спецсимволы URI, закодируйте их в `DATABASE_URL`. Файл `.env` не добавляйте в Git. Доступ к `.env`, `/etc/letsencrypt` и резервным копиям ограничьте администратором VPS.
 
-## Демо-режим
+### Первый TLS-сертификат
 
-Оба интерфейса используют общий демонстрационный источник данных в `src/data/demo.ts`. Он хранит услуги, категории, записи и настройки в IndexedDB этого браузера. Заявка из публичной формы появляется в админке на том же устройстве и сайте; изменение расписания или занятости влияет на доступные интервалы клиента. Данные переживают обновление страницы. Демо не отправляет заявку в настоящий автосервис и не синхронизирует разные устройства.
+Сначала выпустите сертификат через HTTP webroot. Временный Nginx обслуживает только проверочный каталог Certbot на порту 80. Он должен быть свободен; после выпуска временный контейнер удаляется. Подставьте свой домен и email:
 
-Панель оператора в демо открывается без входа. Не размещайте этот вариант как рабочую админку: для эксплуатации нужны серверное хранение данных, проверка прав доступа и защищённый API. Контакты и начальные справочники — примеры.
+```bash
+cd /opt/autospectrum
+mkdir -p certbot
+docker run --rm -d --name autospectrum-acme -p 80:80 -v "$PWD/certbot:/usr/share/nginx/html:ro" nginx:stable-alpine
+sudo certbot certonly --webroot -w "$PWD/certbot" -d example.com --email operator@example.com --agree-tos --no-eff-email
+docker stop autospectrum-acme
+```
 
-Перед публичным запуском замените демонстрационные контакты и адаптер данных. Исходный логотип расположен в `public/logo.jpg`.
+Проверьте, что сертификат появился в `/etc/letsencrypt/live/<DOMAIN>/`. Nginx в Compose монтирует `/etc/letsencrypt` только для чтения и берёт сертификат оттуда. Запустите стек:
 
-## Подключение бэкенда
+```bash
+docker compose config --quiet
+docker compose pull
+docker compose up -d --no-build
+docker compose ps
+curl -fsS https://example.com/healthz
+curl -fsS https://example.com/api/readyz
+```
 
-Интерфейс `BookingProvider` определяет получение услуг, графика и доступного времени, а также отправку формы. `AdminProvider` определяет чтение и изменение записей, справочников и настроек. Реальные адаптеры должны преобразовывать серверные ответы во внутренние типы; компоненты не зависят от адресов серверных методов. Временные интервалы и окончательный статус сохранения определяет сервер. Публичный фронтенд не получает и не хранит идентификатор заявки; админка использует его для точного изменения записи.
+Compose ждёт `pg_isready`, выполняет миграции как одноразовый сервис, ждёт готовности API и лишь затем запускает Nginx. При обновлении тегов образов повторите `docker compose pull && docker compose up -d --no-build` и проверьте `/api/readyz`. Для ограниченной памяти убедитесь, что на диске есть свободное место для временной проверочной базы при резервном копировании.
 
-Статус клиентского результата `confirmed` означает принятую запись на свободное время. `overbooked` означает сохранённую заявку с предупреждением о перегрузке. Рабочий статус записи в админке хранится отдельно. При обрыве связи после отправки результат неизвестен: интерфейс не заявляет об успехе и не выполняет автоматический повтор. Сервер должен самостоятельно защищаться от дублей и повторно проверять расписание в транзакции.
+Создайте первую учётную запись оператора. `read -s` скрывает ввод пароля; CLI получает его через stdin:
 
-Маршруты используют `#`, поэтому статическую сборку можно размещать без перенаправления URL на `index.html`. Черновик формы хранится в `sessionStorage` текущей вкладки.
+```bash
+read -r -s -p 'Пароль оператора: ' staff_password; printf '\n'
+printf '%s\n' "$staff_password" | docker compose exec -T api node --import tsx server/staff-cli.ts create operator
+unset staff_password
+```
+
+Для смены пароля используйте `reset <login>` вместо `create <login>` с тем же вводом через stdin. Для блокировки пароль не требуется: `docker compose exec api node --import tsx server/staff-cli.ts block <login>`.
+
+Certbot, установленный из пакета, обычно запускает `renew` по системному таймеру. Добавьте deploy hook, чтобы Nginx перечитывал обновлённый сертификат:
+
+```bash
+sudo install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
+printf '%s\n' '#!/bin/sh' 'cd /opt/autospectrum && /usr/bin/docker compose exec -T web nginx -s reload' | sudo tee /etc/letsencrypt/renewal-hooks/deploy/autospectrum-reload.sh >/dev/null
+sudo chmod 755 /etc/letsencrypt/renewal-hooks/deploy/autospectrum-reload.sh
+sudo certbot renew --dry-run --run-deploy-hooks
+```
+
+На системе без таймера Certbot добавьте ежедневный `certbot renew -q` в root crontab. HTTP Nginx постоянно отдаёт `/.well-known/acme-challenge/` из `certbot/`, поэтому продление не требует отключать сайт.
+
+### Ежедневные внешние копии
+
+На VPS установите AWS CLI v2 и создайте защищённый файл `/etc/autospectrum/backup.env` (mode `600`, владелец root):
+
+```bash
+S3_BUCKET=your-external-bucket
+S3_PREFIX=autospectrum
+S3_ENDPOINT_URL=https://s3.example.invalid
+AWS_DEFAULT_REGION=your-region
+AWS_ACCESS_KEY_ID=replace-me
+AWS_SECRET_ACCESS_KEY=replace-me
+```
+
+Используйте отдельный бакет или префикс и учётную запись с правами чтения, записи, удаления и listing только этого префикса. Включите шифрование бакета. Файл содержит shell-переменные: значения с пробелами или символами shell заключайте в одинарные кавычки. Эти данные не должны попадать в Git, журнал команд или `.env.example`.
+
+`deploy/backup.sh` делает сжатый `pg_dump` custom format, восстанавливает его во временную базу и проверяет наличие таблиц. Только после успешной проверки он загружает файл в S3 и оставляет семь последних дневных копий. Ручная проверка:
+
+```bash
+cd /opt/autospectrum
+sudo bash deploy/backup.sh
+```
+
+Добавьте в root crontab (`sudo crontab -e`) ежедневный запуск по UTC/времени сервера и следите за кодом выхода и журналом:
+
+```cron
+15 2 * * * /bin/bash /opt/autospectrum/deploy/backup.sh >> /var/log/autospectrum-backup.log 2>&1
+```
+
+Создайте мониторинг ошибки cron или отсутствия нового объекта в бакете. Скрипт удаляет старые объекты только после успешной загрузки. Для сохранения истории дольше семи дней настройте отдельную политику хранения на стороне бакета.
+
+### Проверка и восстановление
+
+Проверьте конкретную копию без изменения рабочей базы:
+
+```bash
+cd /opt/autospectrum
+sudo bash deploy/restore.sh --verify-only s3://your-external-bucket/autospectrum/autospectrum-YYYY-MM-DD.dump
+```
+
+`--apply` сначала проверяет восстановление во временную базу, затем останавливает API, удаляет и создаёт рабочую базу, загружает дамп и запускает API. Это операция для окна обслуживания: текущие данные будут заменены выбранной копией. Перед ней сохраните свежую копию текущего состояния и убедитесь, что выбран правильный объект:
+
+```bash
+sudo bash deploy/restore.sh --apply s3://your-external-bucket/autospectrum/autospectrum-YYYY-MM-DD.dump
+curl -fsS https://example.com/api/readyz
+```
+
+Можно указать локальный `.dump` вместо S3 URI. При ошибке восстановления скрипт запускает API обратно, но оператору нужно проверить состояние базы и журналы `docker compose logs db api`. Для полноценной проверки восстановления проводите учения на отдельном VPS с копией этих образов и конфигурации.
+
+## Интерфейс и данные
+
+Клиентская форма и панель оператора используют hash-маршруты. Черновик формы хранится в `sessionStorage` текущей вкладки. Сервер выдаёт окончательный статус записи после повторной проверки свободного времени. Админ-действия требуют авторизации на API; доступность статического `/admin/` сама по себе не даёт прав на чтение или изменение данных.

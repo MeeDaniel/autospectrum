@@ -7,15 +7,24 @@
     "dev": "vite --configLoader runner",
     "build": "tsc --noEmit && vite build --configLoader runner",
     "test": "vitest run --configLoader runner",
-    "test:e2e": "node scripts/run-e2e.mjs"
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "server:dev": "node --import tsx --watch server/app.ts",
+    "server:start": "node --import tsx server/app.ts",
+    "server:build": "tsc -p tsconfig.server.json",
+    "server:migrate": "node --import tsx server/migrate.ts",
+    "server:staff": "node --import tsx server/staff-cli.ts"
   },
   "dependencies": {
-    "preact": "^10.27.0"
+    "fastify": "^5.12.5",
+    "pg": "^8.23.1",
+    "preact": "^10.27.0",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
     "@preact/preset-vite": "^2.10.2",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
     "typescript": "^5.9.0",
     "vite": "^7.1.0",
     "vitest": "^5.0.2"

@@ -3,8 +3,14 @@ import { BookingsSection } from './BookingsSection';
 import { CategoriesSection, ServicesSection } from './CatalogSections';
 import { SettingsSection } from './SettingsSection';
 import { Notice, Panel, useAdminSnapshot } from './common';
+import { AuditSection } from './AuditSection';
 
 export function AdminSections({ section }: { section: AdminSection }) {
+  if (section === 'audit') return <AuditSection />;
+  return <SnapshotSections section={section} />;
+}
+
+function SnapshotSections({ section }: { section: Exclude<AdminSection, 'audit'> }) {
   const { snapshot, error, loading, reload } = useAdminSnapshot();
   if (loading) return <Panel><p role="status">Загружаем данные…</p></Panel>;
   if (!snapshot) return <Notice kind="error">{error || 'Данные недоступны.'} <button type="button" class="admin-inline-link" onClick={() => void reload()}>Повторить</button></Notice>;

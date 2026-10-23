@@ -14,4 +14,9 @@ describe('admin navigation', () => {
     expect(adminRouteHref('settings')).toBe('#/settings');
     expect(adminRouteFromHash('#/review')).toBe('bookings');
   });
+
+  it('opens the audit section from its own hash', () => {
+    expect(adminRouteFromHash('#/audit')).toBe('audit');
+    expect(adminRouteHref('audit')).toBe('#/audit');
+  });
 });

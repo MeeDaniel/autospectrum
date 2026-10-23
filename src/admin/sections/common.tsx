@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { adminProvider } from '../../data/demo';
+import { adminProvider } from '../../data/runtime';
 import { formatMinute, type AdminSnapshot, type Conflict } from '../../domain/admin';
 
 export function useAdminSnapshot() {
