@@ -91,7 +91,7 @@ export function AdminApp({ renderSection }: AdminAppProps) {
       <header class="admin-header">
         <a class="brand" href="/" aria-label="АвтоСпектр — клиентский сайт">
           <span class="brand-mark" aria-hidden="true" />
-          <span class="brand-copy"><strong>АВТОСПЕКТР</strong><small>ПАНЕЛЬ УПРАВЛЕНИЯ</small></span>
+          <span class="brand-copy"></span>
         </a>
         <div class="admin-header-session">
           <span class="admin-header-caption">{staff ? `Сотрудник: ${staff.login}` : 'Рабочее место оператора'}</span>

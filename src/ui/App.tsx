@@ -255,23 +255,21 @@ export function App() {
 
   return <div class="site-shell">
     <header class="site-header">
-      <a class="brand" href="#/" aria-label="АвтоСпектр — на главную">
-        <span class="brand-mark" aria-hidden="true" />
-        <span class="brand-copy"><strong>АВТОСПЕКТР</strong><small>Автосервис с заботой о вас</small></span>
-      </a>
-      <span class="header-link">Демонстрационная версия</span>
+        <a class="brand" href="#/" aria-label="АвтоСпектр — на главную">
+          <span class="brand-mark" aria-hidden="true" />
+          <span class="brand-copy"></span>
+        </a>
     </header>
 
     <main class="main-content">
       {route === 'form' && <div class="narrow-flow">
         <section class="intro">
           <div><p class="eyebrow">ОНЛАЙН-ЗАПИСЬ В АВТОСЕРВИС</p><h1>Запишитесь<br /><em>в АвтоСпектр</em></h1><p>Выберите услугу и удобное время, затем проверьте данные заявки.</p></div>
-          <div class="demo-details"><strong>Информация для примера</strong><span>Адрес: будет указан после настройки</span><span>Телефон: будет указан после настройки</span><span>Часы: {schedule ? `${formatMinute(schedule.workStart)}–${formatMinute(schedule.workEnd)}` : 'уточняются'} (демо)</span></div>
+          <div class="details-card"><strong>Как нас найти</strong><span>Адрес: г. Котлас, ул. Пушкина, д. Колатушкина</span><span>Это рядом с крутым развевающимся змеем</span><span>Часы: {schedule ? `${formatMinute(schedule.workStart)}–${formatMinute(schedule.workEnd)}` : 'уточняются'}</span></div>
         </section>
-        <p class="demo-warning" role="note">Демонстрационный режим: запись и свободное время показаны для примера. Настоящая заявка в автосервис не отправляется.</p>
         <form class="booking-layout" onSubmit={continueToReviewFromForm} noValidate>
           <section class="card main-card">
-            <div class="section-heading"><span class="section-number">01</span><div><h2>Услуга</h2><p>Что нужно сделать с автомобилем?</p></div></div>
+            <div class="section-heading"><span class="section-number">1</span><div><h2>Услуга</h2><p>Что нужно сделать с автомобилем?</p></div></div>
             {servicesError && <div class="alert" role="alert"><p>{servicesError}</p><button type="button" onClick={() => { setServicesError(''); setServicesReload(value => value + 1); }}>Повторить загрузку услуг</button></div>}
             {!services.length && !servicesError && <p class="muted">Загружаем услуги…</p>}
             <div className="field-grid">
@@ -279,13 +277,13 @@ export function App() {
               <label class="field"><span>Автомобиль <b>*</b></span><input autoComplete="off" value={draft.car} onInput={event => change('car', event.currentTarget.value)} placeholder="Например, Kia Rio 2019" aria-invalid={!!currentErrors.car} />{currentErrors.car && <small class="field-error">{currentErrors.car}</small>}</label>
               <label class="field full"><span>Комментарий <small>(необязательно)</small></span><textarea rows={3} value={draft.comment} onInput={event => change('comment', event.currentTarget.value)} placeholder="Расскажите, что беспокоит или что нам стоит знать" /></label>
             </div>
-            {selectedService && <p class="price-note">Учтите, что итоговая цена зависит от автомобиля</p>}
+            {selectedService && <p class="warning-card">Учтите, что итоговая цена зависит от автомобиля</p>}
             <div class="section-divider" />
-            <div class="section-heading"><span class="section-number">02</span><div><h2>Дата и время</h2><p>Выберите свободное окно для визита</p></div></div>
+            <div class="section-heading"><span class="section-number">2</span><div><h2>Дата и время</h2><p>Выберите свободное окно для визита</p></div></div>
             <div class="date-choice"><div><strong>{draft.date ? prettyDate(draft.date) : 'Дата не выбрана'}</strong><span>{!draft.serviceId ? 'Сначала выберите услугу' : draft.time || 'Время не выбрано'}</span></div><button class="button secondary" type="button" disabled={!draft.serviceId} onClick={() => { setMonth(monthOf(draft.date)); setSelectionDate(draft.date); setSelectionTime(draft.time); goTo('date-time'); }}>Выбрать дату и время</button></div>
             {currentErrors.dateTime && <p class="field-error" role="alert">{currentErrors.dateTime}</p>}
             <div class="section-divider" />
-            <div class="section-heading"><span class="section-number">03</span><div><h2>Ваши данные</h2><p>Чтобы мы могли связаться с вами</p></div></div>
+            <div class="section-heading"><span class="section-number">3</span><div><h2>Ваши данные</h2><p>Чтобы мы могли связаться с вами</p></div></div>
             <div class="field-grid">
               <label class="field"><span>Ваше имя <b>*</b></span><input autoComplete="name" value={draft.name} onInput={event => change('name', event.currentTarget.value)} placeholder="Как к вам обращаться" aria-invalid={!!currentErrors.name} />{currentErrors.name && <small class="field-error">{currentErrors.name}</small>}</label>
               <label class="field"><span>Телефон <b>*</b></span><input type="tel" autoComplete="tel" inputMode="tel" value={draft.phone} onInput={event => change('phone', event.currentTarget.value)} onBlur={() => { if (draft.phone) change('phone', normalizePhone(draft.phone)); }} placeholder="+7 (999) 123-45-67" aria-invalid={!!currentErrors.phone} />{currentErrors.phone && <small class="field-error">{currentErrors.phone}</small>}</label>

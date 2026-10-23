@@ -26,41 +26,33 @@ min-height:100vh;
 display:flex;
 flex-direction:column}
 .site-header{
-display:flex;
-align-items:center;
-justify-content:space-between;
-gap:1rem;
 padding:1.15rem max(1.25rem,calc((100vw - 73rem)/2));
 background:white;
 border-bottom:1px solid #ececec}
+.header-wrapper{
+max-width:42rem;
+margin:0 auto 0 auto}
 .brand{
 display:inline-flex;
 align-items:center;
 gap:.75rem;
 text-decoration:none;
 min-width:0}
-.brand-mark{
+.brand-mark, .brand-copy{
 display:block;
-width:3rem;
 height:3rem;
 flex:none;
-background-image:url('/logo.jpg');
 background-repeat:no-repeat;
 background-position:left top;
-background-size:200% 200%;
+background-size:100% 100%;
 border-radius:.45rem}
-.brand-copy{
-display:grid;
-gap:.16rem}
-.brand-copy strong{
-font-size:1.08rem;
-letter-spacing:.11em;
-font-weight:850;
-line-height:1}
-.brand-copy small{
-font-size:.67rem;
-color:#83858b;
-letter-spacing:.025em}
+.brand-mark {
+background-image:url('/logo.jpg');
+width:3rem;}
+.brand-copy {
+background-image:url('/logo_title.jpg');
+width:15rem;
+background-size:auto 100%}
 .header-link{
 font-size:.82rem;
 text-decoration:none;
@@ -113,12 +105,10 @@ margin-bottom:2.25rem}
 margin:0 0 1rem;
 color:#c5262d;
 font-size:.66rem;
-letter-spacing:.18em;
 font-weight:850}
 .intro h1,.flow-heading h1,.result-card h1{
-font-size:clamp(2.2rem,4.4vw,3.7rem);
+font-size:clamp(2.2rem,4.4vw,3.3rem);
 line-height:1.08;
-letter-spacing:-.058em;
 margin:0;
 font-weight:760}
 .intro h1 em,.flow-heading h1 em{
@@ -351,7 +341,7 @@ color:#c62931}
 .flow-heading{
 margin:1.6rem 0 2rem}
 .flow-heading h1{
-font-size:clamp(2.2rem,4vw,3.55rem)}
+font-size:clamp(2.2rem,4vw,3.3rem)}
 .calendar-card,.review-card{
 padding:2rem}
 .calendar-top{
@@ -628,7 +618,7 @@ min-height:2.1rem}
 }
 
 
-.demo-details{
+.details-card{
 display:grid;
 gap:.4rem;
 min-width:17rem;
@@ -637,15 +627,14 @@ padding:.4rem 0 .4rem 1.2rem;
 font-size:1rem;
 line-height:1.4}
 
-.demo-details strong{
+.details-card strong{
 font-size:1.02rem}
 
-.demo-details span{
+.details-card span{
 color:#777b80}
 
-.demo-warning{
+.warning-card{
 padding:1rem 1.15rem;
-margin:0 0 1.25rem;
 border:1px solid #f2d8ba;
 border-radius:.65rem;
 background:#fff7ee;
@@ -710,7 +699,7 @@ min-height:2.8rem}
 font-size:.95rem}
 
 @media(max-width:54rem){
-.demo-details{
+.details-card{
 min-width:0}
 }
 
@@ -718,7 +707,7 @@ min-width:0}
 .intro{
 display:grid;
 gap:1.25rem}
-.demo-details{
+.details-card{
 border-left:0;
 border-top:2px solid #c72931;
 padding:.9rem 0 0}
@@ -749,13 +738,13 @@ min-width:0}
 .section-heading>div{
 min-width:0;
 overflow-wrap:anywhere}
-.demo-warning,.field,.field>span{
+.warning-card,.field,.field>span{
 overflow-wrap:anywhere}
 
 .brand-copy{
 min-width:0}
 
-.brand-copy strong,.intro h1,.flow-heading h1,.result-card h1,.button,.demo-details,.review-list dd{
+.brand-copy strong,.intro h1,.flow-heading h1,.result-card h1,.button,.details-card,.review-list dd{
 overflow-wrap:anywhere}
 
 .button{
@@ -815,7 +804,7 @@ height:min(2.6rem,12vw)}
 white-space:normal}
 .main-content,.site-footer{
 width:calc(100% - min(1.5rem,6vw))}
-.main-card,.calendar-card,.review-card,.note-card,.demo-warning,.date-choice{
+.main-card,.calendar-card,.review-card,.note-card,.warning-card,.date-choice{
 padding:min(1rem,3vw)}
 .section-heading{
 gap:min(1rem,3vw)}
@@ -835,7 +824,7 @@ grid-template-columns:minmax(0,1fr)}
 min-width:0;
 max-width:100%;
 overflow-wrap:anywhere}
-.eyebrow,.intro h1,.intro h1 em,.demo-details{
+.eyebrow,.intro h1,.intro h1 em,.details-card{
 overflow-wrap:anywhere}
 }
 
@@ -857,7 +846,7 @@ color:#555b62;
 font-size:1rem;
 line-height:1.5}
 
-.intro p:last-child,.section-heading p,.field span small,.demo-details span,.date-choice span,.calendar-top p,.calendar-empty,.review-head p,.review-list dt,.result-description,.result-summary span,.muted,.site-footer{
+.intro p:last-child,.section-heading p,.field span small,.details-card span,.date-choice span,.calendar-top p,.calendar-empty,.review-head p,.review-list dt,.result-description,.result-summary span,.muted,.site-footer{
 color:#5b6067}
 
 @media(max-width:36rem){
