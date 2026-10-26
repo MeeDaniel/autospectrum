@@ -1,5 +1,9 @@
 export type Route = 'form' | 'date-time' | 'review' | 'result';
 
+export function legacyAdminRedirect(hash: string): string | null {
+  return hash === '#/admin' || hash === '#/admin/' ? '/admin/' : null;
+}
+
 export function routeFromHash(hash: string): Route {
   switch (hash.replace(/^#/, '')) {
     case '/date-time': return 'date-time';
