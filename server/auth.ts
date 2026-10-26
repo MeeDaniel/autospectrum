@@ -60,7 +60,7 @@ async function loginStaff(pool: Pool, login: string, password: string, ip: strin
       await client.query('COMMIT');
       return { kind: 'limited' };
     }
-    const found = await client.query<{ id: string; login: string; password_hash: string }>('SELECT id, login, password_hash FROM staff_users WHERE login = $1 AND blocked_at IS NULL', [login]);
+    const found = await client.query<{ id: string; login: string; password_hash: string }>('SELECT id, login, password_hash FROM staff_users WHERE login = $1 AND blocked_at IS NULL FOR UPDATE', [login]);
     const user = found.rows[0];
     const valid = await verifyPassword(password, user?.password_hash ?? await dummyHash);
     if (!user || !valid) {
