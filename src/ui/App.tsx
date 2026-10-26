@@ -265,7 +265,7 @@ export function App() {
       {route === 'form' && <div class="narrow-flow">
         <section class="intro">
           <div><p class="eyebrow">ОНЛАЙН-ЗАПИСЬ В АВТОСЕРВИС</p><h1>Запишитесь<br /><em>в АвтоСпектр</em></h1><p>Выберите услугу и удобное время, затем проверьте данные заявки.</p></div>
-          <div class="details-card"><strong>Как нас найти</strong><span>Адрес: г. Котлас, ул. Пушкина, д. Колатушкина</span><span>Это рядом с крутым развевающимся змеем</span><span>Часы: {schedule ? `${formatMinute(schedule.workStart)}–${formatMinute(schedule.workEnd)}` : 'уточняются'}</span></div>
+          <div class="details-card"><strong>Как нас найти</strong><span>Адрес: г. Котлас, ул. Чиркова, д. 23</span><span>Телефон: +7(921)070-11-99</span><span>Часы: 09:00–17:00</span></div>
         </section>
         <form class="booking-layout" onSubmit={continueToReviewFromForm} noValidate>
           <section class="card main-card">
