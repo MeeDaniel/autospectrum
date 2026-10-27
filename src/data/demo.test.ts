@@ -95,15 +95,28 @@ describe('shared demo providers', () => {
     expect(await provider.getSchedule()).toEqual({ workStart: 600, workEnd: 1020 });
   });
 
-  it('excludes elapsed slots today and rejects a stale selected time', async () => {
+  it('uses the same Moscow tomorrow-through-day-60 window for availability and submission', async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-10-12T07:15:00Z')); // 10:15 Moscow
-    const { provider } = createDemoProviders(new MemoryDemoStore());
-    const availability = await provider.getAvailability('diagnostics', '2026-10');
-    const today = availability.startDate;
-    expect(availability.days.find(day => day.date === today)?.times).not.toContain('10:00');
-    expect(availability.days.find(day => day.date === today)?.times).toContain('10:30');
-    await expect(provider.submit({ ...draft, date: today, time: '10:00' })).rejects.toBeInstanceOf(SubmissionRejectedError);
+    vi.setSystemTime(new Date('2026-10-27T20:59:59Z'));
+    const { provider, adminProvider } = createDemoProviders(new MemoryDemoStore());
+    const october = await provider.getAvailability('diagnostics', '2026-10');
+    const december = await provider.getAvailability('diagnostics', '2026-12');
+    expect(october.startDate).toBe('2026-10-28');
+    expect(december.endDate).toBe('2026-12-26');
+    expect(october.days.some(day => day.date === '2026-10-27')).toBe(false);
+    expect(october.days.find(day => day.date === '2026-10-28')?.times).toContain('10:00');
+    expect(december.days.find(day => day.date === '2026-12-26')?.times).toContain('10:00');
+    expect(december.days.some(day => day.date === '2026-12-27')).toBe(false);
+
+    await expect(provider.submit({ ...draft, date: '2026-10-27' })).rejects.toMatchObject({ reason: 'unavailable' });
+    expect((await provider.submit({ ...draft, date: '2026-10-28' })).status).toBe('confirmed');
+    expect((await provider.submit({ ...draft, date: '2026-12-26' })).status).toBe('confirmed');
+    await expect(provider.submit({ ...draft, date: '2026-12-27' })).rejects.toMatchObject({ reason: 'unavailable' });
+    expect((await adminProvider.getSnapshot()).bookings.map(booking => booking.date)).toEqual(['2026-10-28', '2026-12-26']);
+
+    vi.setSystemTime(new Date('2026-10-27T21:00:00Z'));
+    expect((await provider.getAvailability('diagnostics', '2026-10')).startDate).toBe('2026-10-29');
+    await expect(provider.submit({ ...draft, date: '2026-10-28' })).rejects.toMatchObject({ reason: 'unavailable' });
   });
 
   it('stores a new booking when structuredClone and randomUUID are unavailable', async () => {

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Availability, BookingDraft, Service, SubmissionResult } from '../src/domain/booking';
 import { normalizePhone, validateDraft } from '../src/domain/booking';
+import { bookingWindow, isBookableDate } from '../src/domain/booking-window';
 import type { AdminBooking, AdminBookingFilters, AdminCategory, AdminService, AdminSettings, AdminSnapshot, BookingInput, CategoryInput, Conflict, ServiceInput, SettingsInput } from '../src/domain/admin';
 import { formatMinute, occupiesCapacity, parseMinute, validDate, validMinute } from '../src/domain/admin';
 
@@ -149,14 +150,14 @@ export function createDataLayer(pool: DbPool, options: DataLayerOptions = {}) {
     async getSchedule(): Promise<AdminSettings> { return (await readSnapshot(pool, { none: true })).settings; },
     async getAvailability(serviceId: string, month: string): Promise<Availability> {
       required(/^\d{4}-(0[1-9]|1[0-2])$/.test(month), 'Некорректный месяц');
-      const today = moscowToday(now()), startDate = addDays(today, 1), endDate = addDays(today, 30);
+      const { startDate, endDate } = bookingWindow(now());
       const snapshot = await readSnapshot(pool, { from: startDate, to: endDate, active: true });
       const service = snapshot.services.find(item => item.id === serviceId);
       const category = snapshot.categories.find(item => item.id === service?.categoryId);
       if (!service || service.archived || !category || category.archived) throw new NotFoundError('Услуга не найдена');
       const days: Availability['days'] = [];
-      for (let offset = 1; offset <= 30; offset++) {
-        const date = addDays(today, offset); if (!date.startsWith(month)) continue;
+      for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
+        if (!date.startsWith(month)) continue;
         const schedule = resolveSchedule(snapshot.settings, date), times: string[] = [];
         if (!schedule.closed) for (let minute = Math.ceil(schedule.workStart / 30) * 30; minute + service.durationMinutes <= schedule.workEnd && minute + service.durationMinutes <= 1439; minute += 30) {
           const candidate: BookingInput = { serviceId, date, startMinute: minute, durationMinutes: service.durationMinutes, name: '', phone: '', car: '', comment: '', status: 'new' };
@@ -182,8 +183,7 @@ export function createDataLayer(pool: DbPool, options: DataLayerOptions = {}) {
         if (!service || service.archived || !category || category.archived) throw new SubmissionRejectedError('invalid');
         let startMinute: number;
         try { startMinute = parseMinute(draft.time); } catch { throw new SubmissionRejectedError('unavailable'); }
-        const today = moscowToday(now());
-        if (!validDate(draft.date) || draft.date < addDays(today, 1) || draft.date > addDays(today, 30) || startMinute % 30 !== 0 || startMinute + service.durationMinutes > 1439) throw new SubmissionRejectedError('unavailable');
+        if (!validDate(draft.date) || !isBookableDate(draft.date, bookingWindow(now())) || startMinute % 30 !== 0 || startMinute + service.durationMinutes > 1439) throw new SubmissionRejectedError('unavailable');
         const booking: AdminBooking = { id: randomUUID(), serviceId: service.id, date: draft.date, startMinute, durationMinutes: service.durationMinutes, name: draft.name.trim(), phone: normalizePhone(draft.phone), car: draft.car.trim(), comment: draft.comment, status: 'new', revision: 1 };
         const conflicts = findConflicts(booking, snapshot);
         const response: SubmissionResult = { status: conflicts.length ? 'overbooked' : 'confirmed', serviceName: service.name, date: draft.date, time: draft.time };
