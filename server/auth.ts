@@ -1,12 +1,13 @@
-import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
+import type { StaffRole } from '../src/domain/staff';
 
 const scrypt = promisify(scryptCallback);
 const SESSION_COOKIE = 'autospectrum_session';
 
-export type StaffPrincipal = { id: string; login: string };
+export type StaffPrincipal = { id: string; login: string; role: StaffRole };
 
 declare module 'fastify' {
   interface FastifyRequest { staff?: StaffPrincipal; staffCsrfToken?: string }
@@ -20,12 +21,12 @@ function cookieToken(request: FastifyRequest): string | undefined {
   return token && /^[a-f0-9]{64}$/.test(token) ? token : undefined;
 }
 
-export function requireStaff(pool: Pool): preHandlerHookHandler {
+export function requireStaff(pool: Pool, requiredRole?: StaffRole): preHandlerHookHandler {
   return async (request, reply) => {
     const token = cookieToken(request);
     if (!token) { reply.code(401).send({ error: 'unauthorized' }); return; }
-    const result = await pool.query<{ id: string; login: string; csrf_hash: string; csrf_token: string }>(
-      'SELECT u.id, u.login, s.csrf_hash, s.csrf_token FROM staff_sessions s JOIN staff_users u ON u.id = s.staff_id WHERE s.token_hash = $1 AND s.expires_at > now() AND s.revoked_at IS NULL AND u.blocked_at IS NULL',
+    const result = await pool.query<{ id: string; login: string; role: StaffRole; csrf_hash: string; csrf_token: string }>(
+      'SELECT u.id, u.login, u.role, s.csrf_hash, s.csrf_token FROM staff_sessions s JOIN staff_users u ON u.id = s.staff_id WHERE s.token_hash = $1 AND s.expires_at > now() AND s.revoked_at IS NULL AND u.blocked_at IS NULL',
       [digest(token)],
     );
     const staff = result.rows[0];
@@ -37,7 +38,8 @@ export function requireStaff(pool: Pool): preHandlerHookHandler {
         reply.code(403).send({ error: 'csrf_required' }); return;
       }
     }
-    request.staff = { id: staff.id, login: staff.login };
+    if (requiredRole && staff.role !== requiredRole) { reply.code(403).send({ error: 'forbidden' }); return; }
+    request.staff = { id: staff.id, login: staff.login, role: staff.role };
     request.staffCsrfToken = staff.csrf_token;
   };
 }
@@ -60,7 +62,7 @@ async function loginStaff(pool: Pool, login: string, password: string, ip: strin
       await client.query('COMMIT');
       return { kind: 'limited' };
     }
-    const found = await client.query<{ id: string; login: string; password_hash: string }>('SELECT id, login, password_hash FROM staff_users WHERE login = $1 AND blocked_at IS NULL FOR UPDATE', [login]);
+    const found = await client.query<{ id: string; login: string; role: StaffRole; password_hash: string }>('SELECT id, login, role, password_hash FROM staff_users WHERE login = $1 AND blocked_at IS NULL FOR UPDATE', [login]);
     const user = found.rows[0];
     const valid = await verifyPassword(password, user?.password_hash ?? await dummyHash);
     if (!user || !valid) {
@@ -74,7 +76,7 @@ async function loginStaff(pool: Pool, login: string, password: string, ip: strin
     await client.query('DELETE FROM staff_login_attempts WHERE login = $1 AND ip = $2', [login, ip]);
     await appendAudit(client, user.id, 'auth.login', 'staff', user.id);
     await client.query('COMMIT');
-    return { kind: 'ok', staff: { id: user.id, login: user.login }, token, csrfToken };
+    return { kind: 'ok', staff: { id: user.id, login: user.login, role: user.role }, token, csrfToken };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -170,63 +172,4 @@ export async function listAudit(pool: Pool, filters: AuditFilters = {}): Promise
   return result.rows;
 }
 
-function normalizeLogin(login: string): string {
-  const normalized = login.trim().toLowerCase();
-  if (!/^[a-z0-9._@-]{3,64}$/.test(normalized)) throw new Error('Login must be 3-64 ASCII letters, digits, or ._@-');
-  return normalized;
-}
-
-function checkPassword(password: string): void {
-  if (password.length < 12 || password.length > 1024) throw new Error('Password must be 12-1024 characters');
-}
-
-async function inTransaction<T>(pool: Pool, work: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await work(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export async function createStaff(pool: Pool, login: string, password: string): Promise<StaffPrincipal> {
-  const normalized = normalizeLogin(login);
-  checkPassword(password);
-  const id = randomUUID();
-  const passwordHash = await hashPassword(password);
-  return inTransaction(pool, async client => {
-    await client.query('INSERT INTO staff_users (id, login, password_hash) VALUES ($1, $2, $3)', [id, normalized, passwordHash]);
-    await appendAudit(client, null, 'staff.create', 'staff', id);
-    return { id, login: normalized };
-  });
-}
-
-export async function blockStaff(pool: Pool, login: string): Promise<void> {
-  const normalized = normalizeLogin(login);
-  await inTransaction(pool, async client => {
-    const result = await client.query<{ id: string }>('UPDATE staff_users SET blocked_at = now() WHERE login = $1 RETURNING id', [normalized]);
-    const id = result.rows[0]?.id;
-    if (!id) throw new Error('Staff account not found');
-    await client.query('UPDATE staff_sessions SET revoked_at = now() WHERE staff_id = $1 AND revoked_at IS NULL', [id]);
-    await appendAudit(client, null, 'staff.block', 'staff', id);
-  });
-}
-
-export async function resetStaff(pool: Pool, login: string, password: string): Promise<void> {
-  const normalized = normalizeLogin(login);
-  checkPassword(password);
-  const passwordHash = await hashPassword(password);
-  await inTransaction(pool, async client => {
-    const result = await client.query<{ id: string }>('UPDATE staff_users SET password_hash = $1 WHERE login = $2 RETURNING id', [passwordHash, normalized]);
-    const id = result.rows[0]?.id;
-    if (!id) throw new Error('Staff account not found');
-    await client.query('UPDATE staff_sessions SET revoked_at = now() WHERE staff_id = $1 AND revoked_at IS NULL', [id]);
-    await appendAudit(client, null, 'staff.reset_password', 'staff', id);
-  });
-}
+export { createStaff, blockStaff, resetStaff } from './staff-management';

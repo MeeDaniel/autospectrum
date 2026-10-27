@@ -24,9 +24,9 @@ class ConcurrentAccountPool {
   async connect() { return new ConcurrentClient(this); }
 
   async query(sql: string, values: unknown[] = []) {
-    if (sql.startsWith('SELECT u.id, u.login, s.csrf_hash')) {
+    if (sql.startsWith('SELECT u.id, u.login, u.role, s.csrf_hash')) {
       const active = this.sessions.get(values[0] as string);
-      return { rows: active && !this.blocked ? [{ id: 'staff-1', login: 'desk', csrf_hash: '', csrf_token: '' }] : [] };
+      return { rows: active && !this.blocked ? [{ id: 'staff-1', login: 'desk', role: 'staff', csrf_hash: '', csrf_token: '' }] : [] };
     }
     throw new Error(`Unexpected pool query: ${sql}`);
   }
@@ -46,7 +46,7 @@ class ConcurrentAccountPool {
     this.accountWaiters.shift()?.();
   }
 
-  get user() { return this.blocked ? undefined : { id: 'staff-1', login: 'desk', password_hash: this.passwordHash }; }
+  get user() { return this.blocked ? undefined : { id: 'staff-1', login: 'desk', role: 'staff', blocked_at: null, password_hash: this.passwordHash }; }
   setPassword(hash: string) { this.passwordHash = hash; }
   block() { this.blocked = true; }
   revokeSessions() { for (const key of this.sessions.keys()) this.sessions.set(key, false); }
@@ -61,7 +61,7 @@ class ConcurrentClient {
     if (sql === 'COMMIT' || sql === 'ROLLBACK') { this.pool.unlockAccount(this); return { rows: [] }; }
     if (sql.startsWith('SELECT pg_advisory_xact_lock') || sql.startsWith('DELETE FROM staff_login_attempts') || sql.startsWith('INSERT INTO audit_log')) return { rows: [] };
     if (sql.startsWith('SELECT count(')) return { rows: [{ total: '0' }] };
-    if (sql.startsWith('SELECT id, login, password_hash')) {
+    if (sql.startsWith('SELECT id, login, role, password_hash') || sql.startsWith('SELECT id, login, role, blocked_at')) {
       if (sql.includes('FOR UPDATE')) await this.pool.lockAccount(this);
       const user = this.pool.user;
       return { rows: user ? [user] : [] };
@@ -122,7 +122,7 @@ describe('staff account login concurrency', () => {
 
 type QueryGate = { reached: ReturnType<typeof deferred>; resume: ReturnType<typeof deferred> };
 
-function gatedPool(pool: Pool, options: { insert?: QueryGate; resetCommit?: QueryGate; loginSelect?: ReturnType<typeof deferred<number>>; resetUpdate?: ReturnType<typeof deferred<number>>; blockUpdate?: ReturnType<typeof deferred<number>> }) {
+function gatedPool(pool: Pool, options: { insert?: QueryGate; resetCommit?: QueryGate; loginSelect?: ReturnType<typeof deferred<number>>; managementStart?: ReturnType<typeof deferred<number>> }) {
   return {
     async connect() {
       const client = await pool.connect();
@@ -141,9 +141,8 @@ function gatedPool(pool: Pool, options: { insert?: QueryGate; resetCommit?: Quer
             await options.resetCommit.resume.promise;
           }
           const pending = client.query(sql, values as never);
-          if (sql.startsWith('SELECT id, login, password_hash')) options.loginSelect?.resolve(pid);
-          if (sql.startsWith('UPDATE staff_users SET password_hash')) options.resetUpdate?.resolve(pid);
-          if (sql.startsWith('UPDATE staff_users SET blocked_at')) options.blockUpdate?.resolve(pid);
+          if (sql.startsWith('SELECT id, login, role, password_hash')) options.loginSelect?.resolve(pid);
+          if (sql.startsWith('SELECT pg_advisory_xact_lock') && sql.includes('autospectrum_staff_management')) options.managementStart?.resolve(pid);
           return pending;
         },
       };
@@ -197,15 +196,18 @@ pgRun('PostgreSQL staff login concurrency', () => {
   it('revokes a login session when login holds the account row before reset', async () => {
     const { login, staff, cleanup } = await fixture();
     const insert: QueryGate = { reached: deferred(), resume: deferred() };
-    const resetUpdate = deferred<number>();
-    const db = gatedPool(pool, { insert, resetUpdate });
+    const managementStart = deferred<number>();
+    const db = gatedPool(pool, { insert, managementStart });
     const app = Fastify();
     registerAuthRoutes(app, db as never);
+    const pending: Promise<unknown>[] = [];
     try {
       const signingIn = app.inject({ method: 'POST', url: '/api/admin/login', payload: { login, password: 'old password 123' } });
+      pending.push(signingIn);
       await insert.reached.promise;
       const resetting = resetStaff(db as never, login, 'new password 123');
-      const pid = await resetUpdate.promise;
+      pending.push(resetting);
+      const pid = await managementStart.promise;
       const state = await lockOrFinished(pool, pid, resetting);
       insert.resume.resolve();
       const signedIn = await signingIn;
@@ -220,6 +222,7 @@ pgRun('PostgreSQL staff login concurrency', () => {
       expect((await app.inject({ method: 'GET', url: '/api/admin/me', headers: { cookie } })).statusCode).toBe(401);
     } finally {
       insert.resume.resolve();
+      await Promise.allSettled(pending);
       await app.close();
       await cleanup();
     }
@@ -232,10 +235,13 @@ pgRun('PostgreSQL staff login concurrency', () => {
     const db = gatedPool(pool, { resetCommit, loginSelect });
     const app = Fastify();
     registerAuthRoutes(app, db as never);
+    const pending: Promise<unknown>[] = [];
     try {
       const resetting = resetStaff(db as never, login, 'new password 123');
+      pending.push(resetting);
       await resetCommit.reached.promise;
       const oldLogin = app.inject({ method: 'POST', url: '/api/admin/login', payload: { login, password: 'old password 123' } });
+      pending.push(oldLogin);
       const pid = await loginSelect.promise;
       const state = await lockOrFinished(pool, pid, oldLogin);
       resetCommit.resume.resolve();
@@ -247,6 +253,7 @@ pgRun('PostgreSQL staff login concurrency', () => {
       expect(replacement.statusCode).toBe(200);
     } finally {
       resetCommit.resume.resolve();
+      await Promise.allSettled(pending);
       await app.close();
       await cleanup();
     }
@@ -255,15 +262,18 @@ pgRun('PostgreSQL staff login concurrency', () => {
   it('keeps a blocked account from using a login session already in flight', async () => {
     const { login, staff, cleanup } = await fixture();
     const insert: QueryGate = { reached: deferred(), resume: deferred() };
-    const blockUpdate = deferred<number>();
-    const db = gatedPool(pool, { insert, blockUpdate });
+    const managementStart = deferred<number>();
+    const db = gatedPool(pool, { insert, managementStart });
     const app = Fastify();
     registerAuthRoutes(app, db as never);
+    const pending: Promise<unknown>[] = [];
     try {
       const signingIn = app.inject({ method: 'POST', url: '/api/admin/login', payload: { login, password: 'old password 123' } });
+      pending.push(signingIn);
       await insert.reached.promise;
       const blocking = blockStaff(db as never, login);
-      const pid = await blockUpdate.promise;
+      pending.push(blocking);
+      const pid = await managementStart.promise;
       const state = await lockOrFinished(pool, pid, blocking);
       insert.resume.resolve();
       const signedIn = await signingIn;
@@ -277,6 +287,7 @@ pgRun('PostgreSQL staff login concurrency', () => {
       expect((await app.inject({ method: 'GET', url: '/api/admin/me', headers: { cookie } })).statusCode).toBe(401);
     } finally {
       insert.resume.resolve();
+      await Promise.allSettled(pending);
       await app.close();
       await cleanup();
     }

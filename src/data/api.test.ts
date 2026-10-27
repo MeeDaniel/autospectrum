@@ -29,3 +29,25 @@ describe('HTTP booking provider', () => {
     await expect(provider.submit(draft)).rejects.toMatchObject({ name: 'SubmissionRejectedError', reason: 'unavailable' } satisfies Partial<SubmissionRejectedError>);
   });
 });
+
+describe('admin API session', () => {
+  it('clears cached CSRF and signals login after a protected request returns 401', async () => {
+    const calls: { url: string; csrf: string | null }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {
+      calls.push({ url, csrf: new Headers(options.headers).get('X-CSRF-Token') });
+      if (url === '/api/admin/login') return new Response(JSON.stringify({ staff: { id: 'operator-1', login: 'desk', role: 'operator' }, csrfToken: 'csrf-old' }), { status: 200 });
+      if (url === '/api/admin/staff') return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 });
+      if (url === '/api/admin/me') return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 });
+      return new Response('{}', { status: 200 });
+    }));
+    const { auth, staffManagement } = createApiProviders();
+    await auth.login('desk', 'password');
+    let expired = 0;
+    auth.onUnauthorized(() => { expired++; });
+    await expect(staffManagement.create({ login: 'newstaff', password: 'a long password', role: 'staff' })).rejects.toThrow();
+    expect(expired).toBe(1);
+    expect(calls.find(call => call.url === '/api/admin/staff')?.csrf).toBe('csrf-old');
+    await expect(staffManagement.create({ login: 'newstaff', password: 'a long password', role: 'staff' })).rejects.toThrow();
+    expect(calls.find(call => call.url === '/api/admin/me')?.csrf).toBeNull();
+  });
+});

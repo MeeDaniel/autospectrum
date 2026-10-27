@@ -1,15 +1,16 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { auth, demoMode } from '../data/runtime';
-import { adminRouteFromHash, adminRouteHref, adminSections, type AdminSection } from './navigation';
+import { adminRouteFromHash, adminRouteHref, adminSections, allowedAdminSection, visibleAdminSections, type AdminSection } from './navigation';
+import type { StaffRole } from '../domain/staff';
 
 export type AdminAppProps = {
-  renderSection?: (section: AdminSection) => ComponentChildren;
+  renderSection?: (section: AdminSection, actorId?: string) => ComponentChildren;
 };
 
 export function AdminApp({ renderSection }: AdminAppProps) {
   const [section, setSection] = useState<AdminSection>(() => adminRouteFromHash(window.location.hash));
-  const [staff, setStaff] = useState<{ id: string; login: string } | null>(null);
+  const [staff, setStaff] = useState<{ id: string; login: string; role: StaffRole } | null>(null);
   const [checkingSession, setCheckingSession] = useState(!demoMode);
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
@@ -17,7 +18,20 @@ export function AdminApp({ renderSection }: AdminAppProps) {
   const [authBusy, setAuthBusy] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const hasMounted = useRef(false);
-  const current = adminSections.find(item => item.id === section)!;
+  const activeSection = allowedAdminSection(section, staff?.role ?? null, demoMode);
+  const current = adminSections.find(item => item.id === activeSection)!;
+
+  useEffect(() => {
+    if (demoMode) return;
+    return auth.onUnauthorized(() => { setStaff(null); setPassword(''); });
+  }, []);
+
+  useEffect(() => {
+    if (!demoMode && !staff) return;
+    const next = allowedAdminSection(adminRouteFromHash(window.location.hash), staff?.role ?? null, demoMode);
+    if (adminRouteFromHash(window.location.hash) !== next) window.history.replaceState(null, '', adminRouteHref(next));
+    setSection(next);
+  }, [staff?.role]);
 
   useEffect(() => {
     if (demoMode) return;
@@ -31,10 +45,15 @@ export function AdminApp({ renderSection }: AdminAppProps) {
   }, []);
 
   useEffect(() => {
-    const updateRoute = () => setSection(adminRouteFromHash(window.location.hash));
+    const updateRoute = () => {
+      const requested = adminRouteFromHash(window.location.hash);
+      const next = allowedAdminSection(requested, staff?.role ?? null, demoMode);
+      if (next !== requested) window.history.replaceState(null, '', adminRouteHref(next));
+      setSection(next);
+    };
     window.addEventListener('hashchange', updateRoute);
     return () => window.removeEventListener('hashchange', updateRoute);
-  }, []);
+  }, [staff?.role]);
 
   useEffect(() => {
     document.title = `${current.label} — АвтоСпектр`;
@@ -101,8 +120,8 @@ export function AdminApp({ renderSection }: AdminAppProps) {
       <div class="admin-layout">
         <aside class="admin-sidebar" aria-label="Разделы админ-панели">
           <nav class="admin-nav" aria-label="Основная навигация">
-            {adminSections.map(item => (
-              <a key={item.id} href={adminRouteHref(item.id)} class={item.id === section ? 'admin-nav-link is-active' : 'admin-nav-link'} aria-current={item.id === section ? 'page' : undefined}>
+            {visibleAdminSections(staff?.role ?? null, demoMode).map(item => (
+              <a key={item.id} href={adminRouteHref(item.id)} class={item.id === activeSection ? 'admin-nav-link is-active' : 'admin-nav-link'} aria-current={item.id === activeSection ? 'page' : undefined}>
                 <span>{item.label}</span>
                 <span aria-hidden="true">↗</span>
               </a>
@@ -118,7 +137,7 @@ export function AdminApp({ renderSection }: AdminAppProps) {
           </div>
           <div class="admin-page-content">
             {authError && <p class="admin-auth-error" role="alert">{authError}</p>}
-            {renderSection ? renderSection(section) : <div class="admin-empty-state" role="status">Раздел готовится к работе.</div>}
+            {renderSection ? renderSection(activeSection, staff?.id) : <div class="admin-empty-state" role="status">Раздел готовится к работе.</div>}
           </div>
         </main>
       </div>

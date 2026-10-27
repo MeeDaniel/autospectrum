@@ -7,6 +7,8 @@ import type { BookingDraft } from '../src/domain/booking';
 import { appendAudit, listAudit, registerAuthRoutes, requireStaff } from './auth';
 import { createDataLayer, DataValidationError, IdempotencyConflictError, NotFoundError, RevisionConflictError, ScheduleConflictError, SubmissionRejectedError } from './data';
 import { safeError } from './request-logging';
+import { registerStaffRoutes } from './staff-routes';
+import { StaffManagementError } from './staff-management';
 
 type DataLayer = ReturnType<typeof createDataLayer>;
 type SaveBody<T> = { input: T; allowConflicts?: boolean };
@@ -32,9 +34,12 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
     done();
   });
   registerAuthRoutes(app, pool);
+  registerStaffRoutes(app, pool);
   const guard = requireStaff(pool);
+  const operatorGuard = requireStaff(pool, 'operator');
 
   app.setErrorHandler((error, request, reply) => {
+    if (error instanceof StaffManagementError) return reply.code(error.status).send({ code: error.code, message: error.message });
     if (error instanceof SubmissionRejectedError) return reply.code(422).send({ code: error.reason, message: error.message });
     if (error instanceof ScheduleConflictError) return reply.code(409).send({ code: 'schedule_conflict', message: error.message, conflicts: error.conflicts });
     if (error instanceof RevisionConflictError) return reply.code(409).send({ code: 'revision_conflict', message: error.message });
@@ -86,7 +91,7 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
     const { from, to, status, cursor, limit } = request.query;
     return data.listAdminBookings({ from, to, status }, limit === undefined ? 50 : Number(limit), cursor);
   });
-  app.get<{ Querystring: { actorId?: string; entity?: string; beforeId?: string; limit?: string } }>('/api/admin/audit', { preHandler: guard }, async request => {
+  app.get<{ Querystring: { actorId?: string; entity?: string; beforeId?: string; limit?: string } }>('/api/admin/audit', { preHandler: operatorGuard }, async request => {
     const { actorId, entity, beforeId, limit } = request.query;
     return listAudit(pool, { actorId, entity, beforeId: beforeId ? Number(beforeId) : undefined, limit: limit ? Number(limit) : undefined });
   });
