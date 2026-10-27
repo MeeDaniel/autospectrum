@@ -1,11 +1,12 @@
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import { Pool } from 'pg';
 import type { AdminBooking, BookingInput, CategoryInput, ServiceInput, SettingsInput } from '../src/domain/admin';
 import type { BookingDraft } from '../src/domain/booking';
 import { appendAudit, listAudit, registerAuthRoutes, requireStaff } from './auth';
 import { createDataLayer, DataValidationError, IdempotencyConflictError, NotFoundError, RevisionConflictError, ScheduleConflictError, SubmissionRejectedError } from './data';
+import { safeError } from './request-logging';
 
 type DataLayer = ReturnType<typeof createDataLayer>;
 type SaveBody<T> = { input: T; allowConflicts?: boolean };
@@ -18,12 +19,22 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
     const details = entity === 'settings' ? { changedFields, before, after } : { changedFields };
     await appendAudit(client, actorId, action, entity, entityId, details);
   },
-})) {
-  const app = Fastify({ bodyLimit: 32 * 1024, trustProxy: (_address, hop) => hop === 1 });
+}), logging?: { stream: { write(message: string): void } }) {
+  const app = Fastify({
+    bodyLimit: 32 * 1024, trustProxy: (_address, hop) => hop < 1, logController: new LogController({ disableRequestLogging: true }),
+    logger: { level: 'info', ...(logging?.stream ? { stream: logging.stream } : {}) },
+  });
+  app.addHook('onResponse', (request, reply, done) => {
+    app.log.info({
+      requestId: request.id, method: request.method, route: request.routeOptions.url ?? '<unmatched>',
+      statusCode: reply.statusCode, durationMs: reply.elapsedTime,
+    }, 'request completed');
+    done();
+  });
   registerAuthRoutes(app, pool);
   const guard = requireStaff(pool);
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     if (error instanceof SubmissionRejectedError) return reply.code(422).send({ code: error.reason, message: error.message });
     if (error instanceof ScheduleConflictError) return reply.code(409).send({ code: 'schedule_conflict', message: error.message, conflicts: error.conflicts });
     if (error instanceof RevisionConflictError) return reply.code(409).send({ code: 'revision_conflict', message: error.message });
@@ -31,7 +42,10 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
     if (error instanceof NotFoundError) return reply.code(404).send({ code: 'not_found', message: error.message });
     if (error instanceof DataValidationError) return reply.code(422).send({ code: 'invalid', message: error.message });
     if (error && typeof error === 'object' && ('validation' in error || ('statusCode' in error && error.statusCode === 400))) return reply.code(400).send({ code: 'invalid', message: 'Проверьте данные запроса' });
-    app.log.error(error);
+    app.log.error({
+      requestId: request.id, method: request.method, route: request.routeOptions.url ?? '<unmatched>',
+      statusCode: 500, error: safeError(error),
+    }, 'server error');
     return reply.code(500).send({ code: 'server_error', message: 'Не удалось выполнить запрос' });
   });
 
@@ -110,5 +124,5 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  void main().catch(error => { console.error(error); process.exitCode = 1; });
+  void main().catch(error => { console.error(JSON.stringify({ event: 'startup_error', error: safeError(error) })); process.exitCode = 1; });
 }
