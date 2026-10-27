@@ -31,6 +31,19 @@ describe('HTTP booking provider', () => {
 });
 
 describe('admin API session', () => {
+  it('sends every booking filter through the list endpoint', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify({ bookings: [], total: 0, nextCursor: null, conflicts: {} }), { status: 200 });
+    }));
+    const { adminProvider } = createApiProviders();
+    await adminProvider.listBookings({ query: '  Иван %_  ', categoryId: 'cat', serviceId: 'svc', from: '2026-10-01', to: '2026-10-31', status: 'confirmed' }, 25, 'next');
+    const url = new URL(urls[0], 'http://localhost');
+    expect(url.pathname).toBe('/api/admin/bookings');
+    expect(Object.fromEntries(url.searchParams)).toEqual({ limit: '25', from: '2026-10-01', to: '2026-10-31', status: 'confirmed', query: '  Иван %_  ', categoryId: 'cat', serviceId: 'svc', cursor: 'next' });
+  });
+
   it('clears cached CSRF and signals login after a protected request returns 401', async () => {
     const calls: { url: string; csrf: string | null }[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {

@@ -1,7 +1,7 @@
 import type { Availability, BookingDraft, Service, SubmissionResult } from '../domain/booking';
 import { normalizePhone, validateDraft } from '../domain/booking';
 import { assessBooking, formatMinute, parseMinute, validDate, validMinute, validateSettings } from '../domain/admin';
-import type { AdminBooking, AdminCategory, AdminService, AdminSettings, AdminSnapshot, BookingInput, CategoryInput, Conflict, ServiceInput, SettingsInput } from '../domain/admin';
+import type { AdminBooking, AdminBookingFilters, AdminCategory, AdminService, AdminSettings, AdminSnapshot, BookingInput, CategoryInput, Conflict, ServiceInput, SettingsInput } from '../domain/admin';
 import { copyDemoValue, IndexedDbDemoStore, type DemoStore } from './store';
 
 export { MemoryDemoStore, IndexedDbDemoStore } from './store';
@@ -16,7 +16,7 @@ export interface BookingProvider {
 
 export interface AdminProvider {
   getSnapshot(): Promise<AdminSnapshot>;
-  listBookings(filters?: { from?: string; to?: string; status?: AdminBooking['status'] }, limit?: number, cursor?: string): Promise<{ bookings: AdminBooking[]; total: number; nextCursor: string | null; conflicts: Record<string, Conflict[]> }>;
+  listBookings(filters?: AdminBookingFilters, limit?: number, cursor?: string): Promise<{ bookings: AdminBooking[]; total: number; nextCursor: string | null; conflicts: Record<string, Conflict[]> }>;
   previewBooking(input: BookingInput): Promise<Conflict[]>;
   saveBooking(input: BookingInput, allowConflicts?: boolean): Promise<AdminBooking>;
   deleteBooking(id: string, revision: number): Promise<void>;
@@ -102,7 +102,14 @@ export function createDemoProviders(store: DemoStore): { provider: BookingProvid
   const adminProvider: AdminProvider = {
     async listBookings(filters = {}, limit = 50, cursor) {
       const snapshot = await store.read();
-      const rows = snapshot.bookings.filter(item => (!filters.from || item.date >= filters.from) && (!filters.to || item.date <= filters.to) && (!filters.status || item.status === filters.status))
+      const query = filters.query?.trim().toLocaleLowerCase('ru');
+      const rows = snapshot.bookings.filter(item => {
+        const service = snapshot.services.find(value => value.id === item.serviceId);
+        return (!filters.from || item.date >= filters.from) && (!filters.to || item.date <= filters.to) && (!filters.status || item.status === filters.status)
+          && (!filters.serviceId || item.serviceId === filters.serviceId)
+          && (!filters.categoryId || service?.categoryId === filters.categoryId)
+          && (!query || [item.name, item.phone, item.car].some(value => value.toLocaleLowerCase('ru').includes(query)));
+      })
         .sort((a, b) => b.date.localeCompare(a.date) || b.startMinute - a.startMinute || b.id.localeCompare(a.id));
       const offset = cursor ? Number(cursor) : 0;
       const bookings = rows.slice(offset, offset + limit);

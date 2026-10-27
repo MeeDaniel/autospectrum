@@ -13,6 +13,28 @@ const draft = { serviceId: 'diagnostics', date: tomorrow, time: '10:00', name: '
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('shared demo providers', () => {
+  it('filters the complete demo dataset before counting and paging', async () => {
+    const store = new MemoryDemoStore();
+    await store.update(snapshot => {
+      snapshot.categories.push({ id: 'other-category', name: 'Other', lineCount: 2, archived: false, revision: 1 });
+      snapshot.services.push({ id: 'other-service', categoryId: 'other-category', name: 'Other', priceFrom: 100, durationMinutes: 30, archived: false, revision: 1 });
+      for (let index = 0; index < 110; index++) snapshot.bookings.push({ id: `other-${index}`, serviceId: 'diagnostics', date: '2026-10-20', startMinute: 600, durationMinutes: 30, name: 'Other', phone: '+79990000000', car: 'Car', comment: '', status: 'new', revision: 1 });
+      snapshot.bookings.push({ id: 'target-one', serviceId: 'diagnostics', date: '2026-10-19', startMinute: 600, durationMinutes: 30, name: 'Needle %', phone: '+79990000000', car: 'Car', comment: '', status: 'confirmed', revision: 1 });
+      snapshot.bookings.push({ id: 'target-two', serviceId: 'other-service', date: '2026-10-19', startMinute: 600, durationMinutes: 30, name: 'Other', phone: '+7999Needle', car: 'Car_', comment: '', status: 'confirmed', revision: 1 });
+    });
+    const { adminProvider } = createDemoProviders(store);
+    const first = await adminProvider.listBookings({ query: '  nEeDlE  ' }, 1);
+    expect(first.total).toBe(2);
+    expect(first.bookings.map(item => item.id)).toEqual(['target-two']);
+    const second = await adminProvider.listBookings({ query: 'needle' }, 1, first.nextCursor!);
+    expect(second.bookings.map(item => item.id)).toEqual(['target-one']);
+    expect(second.nextCursor).toBeNull();
+    const intersection = await adminProvider.listBookings({ query: '%', categoryId: 'general', serviceId: 'diagnostics', from: '2026-10-19', to: '2026-10-19', status: 'confirmed' });
+    expect(intersection.total).toBe(1);
+    expect(intersection.bookings.map(item => item.id)).toEqual(['target-one']);
+    expect((await adminProvider.listBookings({ query: '_' })).bookings.map(item => item.id)).toEqual(['target-two']);
+  });
+
   it('persists a public submission for the operator without returning its ID', async () => {
     const { provider, adminProvider } = createDemoProviders(new MemoryDemoStore());
     const result = await provider.submit(draft);

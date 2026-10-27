@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Availability, BookingDraft, Service, SubmissionResult } from '../src/domain/booking';
 import { normalizePhone, validateDraft } from '../src/domain/booking';
-import type { AdminBooking, AdminCategory, AdminService, AdminSettings, AdminSnapshot, BookingInput, CategoryInput, Conflict, ServiceInput, SettingsInput } from '../src/domain/admin';
+import type { AdminBooking, AdminBookingFilters, AdminCategory, AdminService, AdminSettings, AdminSnapshot, BookingInput, CategoryInput, Conflict, ServiceInput, SettingsInput } from '../src/domain/admin';
 import { formatMinute, occupiesCapacity, parseMinute, validDate, validMinute } from '../src/domain/admin';
 
 export type Queryable = { query(sql: string, values?: unknown[]): Promise<{ rows: any[] }> };
@@ -57,7 +57,7 @@ export function findConflicts(booking: BookingInput, snapshot: AdminSnapshot): C
   return conflicts;
 }
 
-type BookingFilter = { date?: string; from?: string; to?: string; status?: AdminBooking['status']; active?: boolean; dates?: string[]; none?: boolean };
+type BookingFilter = AdminBookingFilters & { date?: string; active?: boolean; dates?: string[]; none?: boolean };
 function bookingWhere(filter: BookingFilter = {}): { where: string; values: unknown[] } {
   const clauses: string[] = [], values: unknown[] = [];
   if (filter.none) clauses.push('false');
@@ -65,6 +65,13 @@ function bookingWhere(filter: BookingFilter = {}): { where: string; values: unkn
   if (filter.from) { values.push(filter.from); clauses.push(`date >= $${values.length}`); }
   if (filter.to) { values.push(filter.to); clauses.push(`date <= $${values.length}`); }
   if (filter.status) { values.push(filter.status); clauses.push(`status = $${values.length}`); }
+  if (filter.serviceId) { values.push(filter.serviceId); clauses.push(`service_id = $${values.length}`); }
+  if (filter.categoryId) { values.push(filter.categoryId); clauses.push(`EXISTS (SELECT 1 FROM services AS filter_service WHERE filter_service.id = bookings.service_id AND filter_service.category_id = $${values.length})`); }
+  const query = filter.query?.trim();
+  if (query) {
+    values.push(`%${query.replace(/[~%_]/g, '~$&')}%`);
+    clauses.push(`(data->>'name' ILIKE $${values.length} ESCAPE '~' OR data->>'phone' ILIKE $${values.length} ESCAPE '~' OR data->>'car' ILIKE $${values.length} ESCAPE '~')`);
+  }
   if (filter.active) clauses.push("status IN ('new', 'confirmed')");
   if (filter.dates) { values.push(filter.dates); clauses.push(`date = ANY($${values.length}::date[])`); }
   return { where: clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '', values };
@@ -188,10 +195,11 @@ export function createDataLayer(pool: DbPool, options: DataLayerOptions = {}) {
     async getAdminSnapshot(filters?: { date?: string; from?: string; to?: string; status?: AdminBooking['status'] }): Promise<AdminSnapshot> {
       return readSnapshot(pool, { ...filters, active: true });
     },
-    async listAdminBookings(filters: { date?: string; from?: string; to?: string; status?: AdminBooking['status'] } = {}, limit = 50, cursor?: string): Promise<{ bookings: AdminBooking[]; total: number; nextCursor: string | null; conflicts: Record<string, Conflict[]> }> {
+    async listAdminBookings(filters: AdminBookingFilters & { date?: string } = {}, limit = 50, cursor?: string): Promise<{ bookings: AdminBooking[]; total: number; nextCursor: string | null; conflicts: Record<string, Conflict[]> }> {
       required(Number.isInteger(limit) && limit >= 1 && limit <= 100, 'Некорректный размер страницы');
       for (const date of [filters.date, filters.from, filters.to]) if (date !== undefined) required(validDate(date), 'Некорректная дата');
       if (filters.status !== undefined) required(['new', 'confirmed', 'completed', 'cancelled'].includes(filters.status), 'Некорректный статус');
+      for (const value of [filters.query, filters.categoryId, filters.serviceId]) if (value !== undefined) required(typeof value === 'string', 'Некорректный фильтр');
       const base = bookingWhere(filters);
       const count = await pool.query(`SELECT count(*)::text AS total FROM bookings${base.where}`, base.values);
       const values = [...base.values], clauses = base.where ? [base.where.slice(7)] : [];

@@ -83,6 +83,9 @@ export function createApiProviders() {
       if (filters.from) params.set('from', filters.from);
       if (filters.to) params.set('to', filters.to);
       if (filters.status) params.set('status', filters.status);
+      if (filters.query) params.set('query', filters.query);
+      if (filters.categoryId) params.set('categoryId', filters.categoryId);
+      if (filters.serviceId) params.set('serviceId', filters.serviceId);
       if (cursor) params.set('cursor', cursor);
       return request(`/api/admin/bookings?${params}`);
     },

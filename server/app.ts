@@ -87,9 +87,9 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
   });
 
   app.get('/api/admin/snapshot', { preHandler: guard }, async () => data.getAdminSnapshot({ from: new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()) }));
-  app.get<{ Querystring: { from?: string; to?: string; status?: AdminBooking['status']; cursor?: string; limit?: string } }>('/api/admin/bookings', { preHandler: guard }, async request => {
-    const { from, to, status, cursor, limit } = request.query;
-    return data.listAdminBookings({ from, to, status }, limit === undefined ? 50 : Number(limit), cursor);
+  app.get<{ Querystring: { from?: string; to?: string; status?: AdminBooking['status']; query?: string; categoryId?: string; serviceId?: string; cursor?: string; limit?: string } }>('/api/admin/bookings', { preHandler: guard }, async request => {
+    const { from, to, status, query, categoryId, serviceId, cursor, limit } = request.query;
+    return data.listAdminBookings({ from, to, status, query, categoryId, serviceId }, limit === undefined ? 50 : Number(limit), cursor);
   });
   app.get<{ Querystring: { actorId?: string; entity?: string; beforeId?: string; limit?: string } }>('/api/admin/audit', { preHandler: operatorGuard }, async request => {
     const { actorId, entity, beforeId, limit } = request.query;
