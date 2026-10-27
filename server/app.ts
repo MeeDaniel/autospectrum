@@ -77,7 +77,10 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
     const bucket = publicAttempts.get(request.ip) ?? { keys: new Map<string, number>(), times: [], lastSeen: now };
     bucket.times = bucket.times.filter(time => now - time < 60000);
     for (const [seenKey, seenAt] of bucket.keys) if (now - seenAt >= 60000) bucket.keys.delete(seenKey);
-    if (!bucket.keys.has(key) && bucket.times.length >= 10) return reply.code(429).send({ code: 'rate_limited', message: 'Слишком много заявок. Попробуйте позже.' });
+    if (!bucket.keys.has(key) && bucket.times.length >= 10) {
+      const retryAfter = Math.max(1, Math.ceil((bucket.times[0] + 60000 - now) / 1000));
+      return reply.header('Retry-After', String(retryAfter)).code(429).send({ code: 'rate_limited', message: 'Слишком много заявок. Попробуйте позже.' });
+    }
     if (!bucket.keys.has(key)) bucket.times.push(now);
     bucket.keys.set(key, now);
     bucket.lastSeen = now;

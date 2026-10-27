@@ -30,6 +30,26 @@ describe('public API', () => {
       expect((await app.inject({ method: 'POST', url: '/api/bookings', headers: { 'idempotency-key': 'key-0' }, payload })).statusCode).toBe(201);
     } finally { clock.mockRestore(); await app.close(); }
   });
+
+  it('reports seconds until the earliest public attempt expires', async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const submit = vi.fn(async () => ({ status: 'confirmed' }));
+    const app = buildApp({ query: vi.fn() } as unknown as Pool, { submit } as unknown as ReturnType<typeof createDataLayer>);
+    const payload = { serviceId: 's', date: '2026-11-01', time: '10:00', name: 'Иван', phone: '+79991234567', car: 'Лада', comment: '' };
+    const send = (key: string) => app.inject({ method: 'POST', url: '/api/bookings', headers: { 'idempotency-key': key }, payload });
+    try {
+      await send('key-0');
+      now += 1_100;
+      for (let index = 1; index < 10; index++) await send(`key-${index}`);
+      const rejection = await send('key-10');
+      expect(rejection.statusCode).toBe(429);
+      expect(rejection.headers['retry-after']).toBe('59');
+      expect(submit).toHaveBeenCalledTimes(10);
+      now += 58_900;
+      expect((await send('key-10')).statusCode).toBe(201);
+    } finally { clock.mockRestore(); await app.close(); }
+  });
 });
 
 describe('production request boundaries', () => {

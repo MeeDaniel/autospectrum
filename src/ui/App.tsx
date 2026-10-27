@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { emptyDraft, normalizePhone, validateDraft } from '../domain/booking';
 import { formatMinute } from '../domain/admin';
 import type { Availability, BookingDraft, Service, SubmissionResult } from '../domain/booking';
-import { adminProvider, provider, SubmissionRejectedError } from '../data/runtime';
+import { adminProvider, demoMode, provider, SubmissionRejectedError } from '../data/runtime';
+import { RateLimitError } from '../data/rate-limit';
 import { goTo, routeFromHash, shiftMonth, type Route } from './navigation';
 
 const draftKey = 'autospectrum.booking.draft';
@@ -99,10 +100,20 @@ export function App() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [retryTime, setRetryTime] = useState(false);
+  const [retryUntil, setRetryUntil] = useState(0);
+  const [retrySeconds, setRetrySeconds] = useState(0);
   const [result, setResult] = useState<DisplayResult | null>(loadResult);
   const resultRef = useRef(result);
   const previousRoute = useRef(route);
   const formScroll = useRef(0);
+
+  useEffect(() => {
+    if (!retryUntil) return;
+    const update = () => setRetrySeconds(Math.max(0, Math.ceil((retryUntil - Date.now()) / 1000)));
+    update();
+    const timer = window.setInterval(update, 200);
+    return () => window.clearInterval(timer);
+  }, [retryUntil]);
 
   useEffect(() => {
     const from = previousRoute.current;
@@ -214,12 +225,15 @@ export function App() {
 
   async function confirm() {
     if (submitting) return;
+    if (retryUntil > Date.now()) return;
     if (resultRef.current) { goTo('result'); return; }
     const found = validateDraft(draft);
     if (Object.keys(found).length) { setErrors(found); goTo('form'); return; }
     setSubmitting(true);
     setSubmitError('');
     setRetryTime(false);
+    setRetryUntil(0);
+    setRetrySeconds(0);
     try {
       const response = await provider.submit(draft);
       try { sessionStorage.setItem(resultKey, JSON.stringify(response)); } catch { /* Keep the result in memory. */ }
@@ -227,6 +241,11 @@ export function App() {
       setResult(response);
       goTo('result');
     } catch (error) {
+      if (error instanceof RateLimitError) {
+        setSubmitError(error.message);
+        setRetryUntil(Date.now() + error.retryAfterSeconds * 1000);
+        return;
+      }
       if (error instanceof SubmissionRejectedError) {
         setSubmitError(error.message);
         setRetryTime(error.reason === 'unavailable');
@@ -330,16 +349,16 @@ export function App() {
             <div><dt>Телефон</dt><dd>{draft.phone || '—'}</dd></div>
           </dl>
         </section>
-        {submitError && <div class="alert" role="alert"><p>{submitError}</p>{retryTime && <button type="button" onClick={() => { setSubmitError(''); setMonth(monthOf(draft.date)); setSelectionDate(draft.date); setSelectionTime(''); goTo('date-time'); }}>Выбрать другое время</button>}</div>}
-        <div class="flow-actions"><button class="button secondary" type="button" onClick={() => goTo('form')}>Назад</button><button class="button primary" type="button" disabled={submitting} onClick={confirm}>{submitting ? 'Отправляем…' : 'Отправить'}</button></div>
+        {submitError && <div class="alert" role="alert"><p>{submitError}</p>{retrySeconds > 0 && <p>Повторная отправка будет доступна через {retrySeconds} с. Заявка не была сохранена.</p>}{retryTime && <button type="button" onClick={() => { setSubmitError(''); setMonth(monthOf(draft.date)); setSelectionDate(draft.date); setSelectionTime(''); goTo('date-time'); }}>Выбрать другое время</button>}</div>}
+        <div class="flow-actions"><button class="button secondary" type="button" onClick={() => goTo('form')}>Назад</button><button class="button primary" type="button" disabled={submitting || retrySeconds > 0} onClick={confirm}>{submitting ? 'Отправляем…' : retrySeconds > 0 ? `Повторить через ${retrySeconds} с` : 'Отправить'}</button></div>
       </div>}
 
       {route === 'result' && <div class="result-wrap">
         <div class="card result-card">
           <span class={result?.status === 'confirmed' ? 'result-icon' : 'result-icon warning'}>{result?.status === 'confirmed' ? '✓' : '!'}</span>
-          <p class="eyebrow">АВТОСПЕКТР · ДЕМО</p>
-          <h1>{result?.status === 'unknown' ? 'Статус заявки неизвестен' : result?.status === 'overbooked' ? 'Заявка принята' : 'Вы записаны'}</h1>
-          <p class="result-description">{result?.status === 'unknown' ? 'Не удалось узнать, сохранилась ли заявка. Когда будут настроены контакты сервиса, уточните статус у менеджера перед повторной отправкой.' : result?.status === 'overbooked' ? 'Заявка принята. На это время много записей — возможен перенос. Менеджер может связаться с вами в рабочее время.' : 'Демонстрационная заявка сохранена. Настоящая запись станет доступна после подключения сервиса.'}</p>
+          <p class="eyebrow">{demoMode ? 'АВТОСПЕКТР · ДЕМО' : 'АВТОСПЕКТР · БЕТА-ВЕРСИЯ'}</p>
+          <h1>{result?.status === 'unknown' ? 'Статус заявки неизвестен' : result?.status === 'overbooked' ? demoMode ? 'Тестовая заявка принята' : 'Заявка принята' : demoMode ? 'Тестовая заявка сохранена' : 'Вы записаны'}</h1>
+          <p class="result-description">{result?.status === 'unknown' ? 'Не удалось узнать, сохранилась ли заявка. Позвоните в автосервис по телефону +7(921)070-11-99 и уточните статус перед повторной отправкой.' : result?.status === 'overbooked' ? demoMode ? 'Тестовая заявка сохранена только в этом браузере. На это время много записей — возможен перенос в демонстрации.' : 'Заявка принята. На это время много записей — возможен перенос. Менеджер может связаться с вами в рабочее время.' : demoMode ? 'Демонстрационная заявка сохранена только в этом браузере. Настоящая запись в автосервис не создана.' : 'Вы записаны. Заявка сохранена в автосервисе на выбранные дату и время.'}</p>
           {result && result.status !== 'unknown' && <div class="result-summary"><strong>{result.serviceName}</strong><span>{prettyDate(result.date)} · {result.time}</span></div>}
           <button class="button primary" type="button" onClick={startAgain}>ОК</button>
         </div>

@@ -2,6 +2,7 @@ import type { AdminBooking, AdminCategory, AdminService, AdminSettings, AdminSna
 import type { BookingDraft, SubmissionResult } from '../domain/booking';
 import { RevisionConflictError, ScheduleConflictError, SubmissionRejectedError, type AdminProvider, type BookingProvider } from './demo';
 import type { StaffAccount, StaffRole } from '../domain/staff';
+import { RateLimitError } from './rate-limit';
 
 type Staff = { id: string; login: string; role: StaffRole };
 type Session = { staff: Staff; csrfToken: string };
@@ -26,6 +27,11 @@ export function createApiProviders() {
     if (protectedWrite && csrfToken) headers.set('X-CSRF-Token', csrfToken);
     const response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
     if (!response.ok) {
+      if (path === '/api/bookings' && response.status === 429) {
+        const raw = response.headers.get('Retry-After');
+        const seconds = raw && /^[1-9]\d*$/.test(raw) ? Number(raw) : NaN;
+        throw new RateLimitError(Number.isSafeInteger(seconds) ? seconds : 60);
+      }
       if (response.status === 401 && path !== '/api/admin/login') {
         const wasAuthenticated = csrfToken !== null;
         csrfToken = null;

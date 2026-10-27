@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiProviders } from './api';
 import { SubmissionRejectedError } from './demo';
 import { emptyDraft } from '../domain/booking';
+import { RateLimitError } from './rate-limit';
 
 const draft = { ...emptyDraft, serviceId: 's', date: '2026-11-01', time: '10:00', name: 'Иван', phone: '+79991234567', car: 'Лада' };
 
@@ -28,9 +29,30 @@ describe('HTTP booking provider', () => {
     const { provider } = createApiProviders();
     await expect(provider.submit(draft)).rejects.toMatchObject({ name: 'SubmissionRejectedError', reason: 'unavailable' } satisfies Partial<SubmissionRejectedError>);
   });
+
+  it.each([
+    ['27', 27],
+    ['0', 60],
+    ['invalid', 60],
+    [null, 60],
+  ])('maps booking 429 Retry-After %s to a definitive wait of %i seconds', async (header, seconds) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code: 'rate_limited' }), {
+      status: 429, headers: header === null ? {} : { 'Retry-After': header },
+    })));
+    const { provider } = createApiProviders();
+    await expect(provider.submit(draft)).rejects.toEqual(new RateLimitError(seconds));
+  });
 });
 
 describe('admin API session', () => {
+  it('keeps an admin login 429 as its own authentication error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code: 'rate_limited', message: 'Слишком много попыток входа' }), {
+      status: 429, headers: { 'Retry-After': '12' },
+    })));
+    const { auth } = createApiProviders();
+    await expect(auth.login('desk', 'wrong')).rejects.toThrow('Слишком много попыток входа');
+  });
+
   it('sends every booking filter through the list endpoint', async () => {
     const urls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
