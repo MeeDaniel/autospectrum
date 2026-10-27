@@ -26,6 +26,39 @@ test('booking dates start empty so the initial request covers all time', async (
   expect(requests[0].searchParams.has('to')).toBe(false);
 });
 
+test('repeating All time keeps the loaded first page visible', async ({ page }) => {
+  await page.route('**/api/admin/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/admin/me') return route.fulfill({ json: { staff: { id: 'operator', login: 'desk', role: 'operator' }, csrfToken: 'token' } });
+    if (url.pathname === '/api/admin/snapshot') return route.fulfill({ json: snapshot });
+    if (url.pathname === '/api/admin/bookings') return route.fulfill({ json: pageOf([booking('past', 'Past booking')]) });
+    return route.fulfill({ status: 404 });
+  });
+  await page.goto('/admin/#/bookings');
+  await expect(page.getByText('Past booking')).toBeVisible();
+  await page.getByRole('button', { name: 'За всё время' }).click();
+  await expect(page.getByText('Past booking')).toBeVisible();
+  await expect(page.getByText('Загружаем записи…')).toHaveCount(0);
+});
+
+test('repeating Today keeps the loaded first page visible', async ({ page }) => {
+  await page.route('**/api/admin/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/admin/me') return route.fulfill({ json: { staff: { id: 'operator', login: 'desk', role: 'operator' }, csrfToken: 'token' } });
+    if (url.pathname === '/api/admin/snapshot') return route.fulfill({ json: snapshot });
+    if (url.pathname === '/api/admin/bookings') return route.fulfill({ json: pageOf([booking('today', 'Today booking')]) });
+    return route.fulfill({ status: 404 });
+  });
+  await page.goto('/admin/#/bookings');
+  await expect(page.getByText('Today booking')).toBeVisible();
+  await page.getByRole('button', { name: 'Сегодня' }).click();
+  await expect(page.getByLabel('С даты')).not.toHaveValue('');
+  await expect(page.getByText('Today booking')).toBeVisible();
+  await page.getByRole('button', { name: 'Сегодня' }).click();
+  await expect(page.getByText('Today booking')).toBeVisible();
+  await expect(page.getByText('Загружаем записи…')).toHaveCount(0);
+});
+
 test('shows a booking page in the order returned by the server cursor', async ({ page }) => {
   await page.route('**/api/admin/**', async route => {
     const url = new URL(route.request().url());
