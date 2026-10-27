@@ -1,7 +1,8 @@
 import type { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { adminProvider } from '../../data/runtime';
 import { formatMinute, type AdminSnapshot, type Conflict } from '../../domain/admin';
+import { DirtyNavigationContext } from '../dirty-navigation';
 
 export function useAdminSnapshot() {
   const [snapshot, setSnapshot] = useState<AdminSnapshot | null>(null);
@@ -65,18 +66,15 @@ export function ConflictList({ conflicts, snapshot, onOpen }: { conflicts: Confl
 export function isDirty<T>(initial: T, draft: T): boolean { return JSON.stringify(initial) !== JSON.stringify(draft); }
 
 export function useUnsavedChanges(dirty: boolean) {
-  const previousHash = useRef(typeof window === 'undefined' ? '' : window.location.hash);
+  const register = useContext(DirtyNavigationContext);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  useLayoutEffect(() => register?.(() => dirtyRef.current), [register]);
   useEffect(() => {
-    if (!dirty) { previousHash.current = window.location.hash; return; }
+    if (!dirty) return;
     const guard = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
-    const guardRoute = () => {
-      if (window.location.hash === previousHash.current) return;
-      if (window.confirm('Есть несохранённые изменения. Покинуть раздел?')) previousHash.current = window.location.hash;
-      else window.location.hash = previousHash.current;
-    };
     window.addEventListener('beforeunload', guard);
-    window.addEventListener('hashchange', guardRoute);
-    return () => { window.removeEventListener('beforeunload', guard); window.removeEventListener('hashchange', guardRoute); };
+    return () => window.removeEventListener('beforeunload', guard);
   }, [dirty]);
 }
 
