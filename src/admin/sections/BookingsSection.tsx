@@ -6,6 +6,7 @@ import { ActionBar, ConflictList, Field, Notice, Panel, confirmDiscard, isDirty,
 
 export const statusLabels: Record<BookingStatus, string> = { new: 'Новая', confirmed: 'Подтверждена', completed: 'Выполнена', cancelled: 'Отменена' };
 const blankFilters: BookingFilters = { query: '', date: '', status: '', categoryId: '', serviceId: '', conflictsOnly: false };
+type SelectedBooking = { key: string; initial: BookingInput; isNew: boolean; booking?: AdminBooking };
 function blankBooking(snapshot: AdminSnapshot): BookingInput {
   const service = snapshot.services.find(item => !item.archived && !snapshot.categories.find(category => category.id === item.categoryId)?.archived);
   return { serviceId: service?.id ?? '', date: moscowToday(), startMinute: snapshot.settings.workStart, durationMinutes: service?.durationMinutes ?? 30, name: '', phone: '', car: '', comment: '', status: 'new' };
@@ -15,41 +16,51 @@ export function BookingsSection({ snapshot, reload }: { snapshot: AdminSnapshot;
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filters, setFilters] = useState<BookingFilters>(blankFilters);
-  const [selectedId, setSelectedId] = useState<string | 'new' | null>(null);
+  const [selected, setSelected] = useState<SelectedBooking | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
   const [pageCursor, setPageCursor] = useState<string | null>(null);
   const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([]);
   const [bookingsPage, setBookingsPage] = useState<Awaited<ReturnType<typeof adminProvider.listBookings>> | null>(null);
+  const [listState, setListState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [listError, setListError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
   const lastQuery = useRef(filters.query);
   const requestGeneration = useRef(0);
-  const invalidatePage = () => { requestGeneration.current++; setBookingsPage(null); };
+  const invalidatePage = () => { requestGeneration.current++; setBookingsPage(null); setListState('loading'); setListError(''); };
   const resetPage = () => { invalidatePage(); setPageCursor(null); setCursorHistory([]); };
+  const retryPage = () => { invalidatePage(); setRetryKey(value => value + 1); };
   useEffect(() => {
     let current = true;
     const generation = ++requestGeneration.current;
     setBookingsPage(null);
+    setListState('loading');
+    setListError('');
     const delay = lastQuery.current === filters.query ? 0 : 250;
     lastQuery.current = filters.query;
     const timer = setTimeout(() => {
       void adminProvider.listBookings({ from: dateFrom || undefined, to: dateTo || undefined, status: filters.status || undefined,
         query: filters.query.trim() || undefined, categoryId: filters.categoryId || undefined, serviceId: filters.serviceId || undefined }, 50, pageCursor || undefined)
-        .then(result => { if (current && generation === requestGeneration.current) setBookingsPage(result); })
-        .catch(cause => { if (current && generation === requestGeneration.current) setError(messageOf(cause)); });
+        .then(result => { if (current && generation === requestGeneration.current) { setBookingsPage(result); setListState('ready'); setListError(''); } })
+        .catch(cause => { if (current && generation === requestGeneration.current) { setListState('error'); setListError(messageOf(cause)); } });
     }, delay);
     return () => { current = false; clearTimeout(timer); };
-  }, [snapshot, dateFrom, dateTo, filters.status, filters.query, filters.categoryId, filters.serviceId, pageCursor]);
+  }, [snapshot, dateFrom, dateTo, filters.status, filters.query, filters.categoryId, filters.serviceId, pageCursor, retryKey]);
   const viewSnapshot = useMemo(() => ({ ...snapshot, bookings: bookingsPage?.bookings ?? [] }), [snapshot, bookingsPage]);
   const filtered = useMemo(() => filters.conflictsOnly
     ? filterBookings(viewSnapshot, { ...blankFilters, conflictsOnly: true })
     : viewSnapshot.bookings, [viewSnapshot, filters.conflictsOnly]);
-  const selected = selectedId && selectedId !== 'new' ? viewSnapshot.bookings.find(item => item.id === selectedId) : undefined;
-  const open = (id: string | 'new') => { setError(''); setSuccess(''); setSelectedId(id); };
+  const open = (id: string | 'new', clearNotices = true) => {
+    const booking = id === 'new' ? undefined : viewSnapshot.bookings.find(item => item.id === id);
+    if (id !== 'new' && !booking) return;
+    if (clearNotices) { setError(''); setSuccess(''); }
+    setSelected({ key: id, initial: booking ?? blankBooking(snapshot), isNew: id === 'new', booking });
+  };
   const remove = async (booking: AdminBooking) => {
     if (!window.confirm(`Удалить запись ${booking.name} от ${booking.date} окончательно?`)) return;
     setBusy(true); setError('');
-    try { await adminProvider.deleteBooking(booking.id, booking.revision); await reload(); setSelectedId(null); setSuccess('Запись удалена.'); }
+    try { await adminProvider.deleteBooking(booking.id, booking.revision); await reload(); setSelected(null); setSuccess('Запись удалена.'); }
     catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
   };
@@ -69,7 +80,7 @@ export function BookingsSection({ snapshot, reload }: { snapshot: AdminSnapshot;
       <div class="admin-filter-extras"><button type="button" class="admin-text-button" onClick={() => { const today = moscowToday(); if (dateFrom !== today || dateTo !== today) { setDateFrom(today); setDateTo(today); resetPage(); } }}>Сегодня</button><button type="button" class="admin-text-button" onClick={() => { if (dateFrom || dateTo) { setDateFrom(''); setDateTo(''); resetPage(); } }}>За всё время</button><label class="admin-checkbox"><input type="checkbox" checked={filters.conflictsOnly} onChange={event => setFilters({ ...filters, conflictsOnly: event.currentTarget.checked })} /> Только конфликты</label></div>
     </Panel>
     <Panel className="admin-list-panel">
-      {!bookingsPage ? <div class="admin-empty" role="status">Загружаем записи…</div> : filtered.length === 0 ? <div class="admin-empty">По выбранным условиям записей нет.</div> : <div class="admin-table-scroll"><table class="admin-table"><thead><tr><th>Дата и время</th><th>Клиент</th><th>Услуга</th><th>Статус</th><th>Расписание</th><th>Действие</th></tr></thead><tbody>{filtered.map(booking => {
+      {listState === 'error' ? <div class="admin-empty"><Notice kind="error">{listError}</Notice><button class="button secondary" type="button" onClick={retryPage}>Повторить загрузку</button></div> : listState === 'loading' ? <div class="admin-empty" role="status">Загружаем записи…</div> : filtered.length === 0 ? <div class="admin-empty">По выбранным условиям записей нет.</div> : <div class="admin-table-scroll"><table class="admin-table"><thead><tr><th>Дата и время</th><th>Клиент</th><th>Услуга</th><th>Статус</th><th>Расписание</th><th>Действие</th></tr></thead><tbody>{filtered.map(booking => {
         const service = snapshot.services.find(item => item.id === booking.serviceId);
         const category = snapshot.categories.find(item => item.id === service?.categoryId);
         const conflicts = bookingsPage?.conflicts[booking.id] ?? assessBooking(booking, viewSnapshot);
@@ -77,7 +88,7 @@ export function BookingsSection({ snapshot, reload }: { snapshot: AdminSnapshot;
       })}</tbody></table></div>}
       <div class="admin-filter-extras" style="padding: 1rem"><button type="button" class="admin-text-button" disabled={!cursorHistory.length} onClick={() => { invalidatePage(); setPageCursor(cursorHistory.at(-1) ?? null); setCursorHistory(cursorHistory.slice(0, -1)); }}>← Назад</button><button type="button" class="admin-text-button" disabled={!bookingsPage?.nextCursor} onClick={() => { invalidatePage(); setCursorHistory([...cursorHistory, pageCursor]); setPageCursor(bookingsPage!.nextCursor); }}>Далее →</button></div>
     </Panel>
-    {selectedId && (selectedId === 'new' || selected) && <BookingEditor key={selectedId} snapshot={viewSnapshot} initial={selected ?? blankBooking(snapshot)} isNew={selectedId === 'new'} busy={busy} setBusy={setBusy} error={error} onClose={() => setSelectedId(null)} onReload={reload} onRefresh={async () => { await reload(); setSelectedId(null); }} onDelete={selected ? () => void remove(selected) : undefined} onSaved={async () => { await reload(); setSelectedId(null); setSuccess('Запись сохранена.'); }} onOpenConflict={id => setSelectedId(id)} onError={setError} />}
+    {selected && <BookingEditor key={selected.key} snapshot={viewSnapshot} initial={selected.initial} isNew={selected.isNew} busy={busy} setBusy={setBusy} error={error} onClose={() => setSelected(null)} onReload={reload} onRefresh={async () => { await reload(); setSelected(null); }} onDelete={selected.booking ? () => void remove(selected.booking!) : undefined} onSaved={async () => { await reload(); setSelected(null); setSuccess('Запись сохранена.'); }} onOpenConflict={id => open(id, false)} onError={setError} />}
   </div>;
 }
 
