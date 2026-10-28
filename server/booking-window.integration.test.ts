@@ -16,8 +16,8 @@ run('public booking window in PostgreSQL', () => {
 
   beforeAll(async () => {
     const parsed = new URL(connectionString!);
-    if (!['localhost', '127.0.0.1'].includes(parsed.hostname) || parsed.pathname !== '/autospectrum_window_test') {
-      throw new Error('Use the isolated autospectrum_window_test database');
+    if (!['localhost', '127.0.0.1'].includes(parsed.hostname) || !['/autospectrum_window_test', '/autospectrum_final_test'].includes(parsed.pathname)) {
+      throw new Error('Use an isolated autospectrum_window_test or autospectrum_final_test database');
     }
     const category = { id: categoryId, name: 'Window test', lineCount: 1, archived: false, revision: 1 };
     const service = { id: serviceId, categoryId, name: 'Window service', priceFrom: 100, durationMinutes: 30, archived: false, revision: 1 };

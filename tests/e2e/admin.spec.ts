@@ -14,7 +14,7 @@ test('operator sees a public request, confirms an overlap, then resolves it', as
   expect(selectedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   await page.getByRole('button', { name: 'Далее' }).click();
   await page.getByRole('button', { name: 'Отправить' }).click();
-  await expect(page.getByText('Вы записаны')).toBeVisible();
+  await expect(page.getByText('Тестовая заявка сохранена')).toBeVisible();
 
   await page.goto('/admin/#/bookings');
   await page.getByRole('button', { name: 'За всё время' }).click();

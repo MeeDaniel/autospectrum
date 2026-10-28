@@ -43,7 +43,7 @@ run('whole-dataset booking filters', () => {
 
   beforeAll(async () => {
     const parsed = new URL(connectionString!);
-    if (!['localhost', '127.0.0.1'].includes(parsed.hostname) || !parsed.pathname.endsWith('/autospectrum_filters_test')) throw new Error('Use the isolated filters database');
+    if (!['localhost', '127.0.0.1'].includes(parsed.hostname) || !['/autospectrum_filters_test', '/autospectrum_final_test'].includes(parsed.pathname)) throw new Error('Use an isolated filters or final test database');
     await pool.query("DELETE FROM audit_log WHERE actor_id IN (SELECT id FROM staff_users WHERE login LIKE 'filters-%') OR (entity = 'staff' AND entity_id IN (SELECT id::text FROM staff_users WHERE login LIKE 'filters-%'))");
     await pool.query("DELETE FROM staff_sessions WHERE staff_id IN (SELECT id FROM staff_users WHERE login LIKE 'filters-%')");
     await pool.query("DELETE FROM staff_users WHERE login LIKE 'filters-%'");
