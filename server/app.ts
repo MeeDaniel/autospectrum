@@ -1,11 +1,14 @@
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import { Pool } from 'pg';
 import type { AdminBooking, BookingInput, CategoryInput, ServiceInput, SettingsInput } from '../src/domain/admin';
 import type { BookingDraft } from '../src/domain/booking';
 import { appendAudit, listAudit, registerAuthRoutes, requireStaff } from './auth';
 import { createDataLayer, DataValidationError, IdempotencyConflictError, NotFoundError, RevisionConflictError, ScheduleConflictError, SubmissionRejectedError } from './data';
+import { safeError } from './request-logging';
+import { registerStaffRoutes } from './staff-routes';
+import { StaffManagementError } from './staff-management';
 
 type DataLayer = ReturnType<typeof createDataLayer>;
 type SaveBody<T> = { input: T; allowConflicts?: boolean };
@@ -18,12 +21,25 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
     const details = entity === 'settings' ? { changedFields, before, after } : { changedFields };
     await appendAudit(client, actorId, action, entity, entityId, details);
   },
-})) {
-  const app = Fastify({ bodyLimit: 32 * 1024, trustProxy: (_address, hop) => hop === 1 });
+}), logging?: { stream: { write(message: string): void } }) {
+  const app = Fastify({
+    bodyLimit: 32 * 1024, trustProxy: (_address, hop) => hop < 1, logController: new LogController({ disableRequestLogging: true }),
+    logger: { level: 'info', ...(logging?.stream ? { stream: logging.stream } : {}) },
+  });
+  app.addHook('onResponse', (request, reply, done) => {
+    app.log.info({
+      requestId: request.id, method: request.method, route: request.routeOptions.url ?? '<unmatched>',
+      statusCode: reply.statusCode, durationMs: reply.elapsedTime,
+    }, 'request completed');
+    done();
+  });
   registerAuthRoutes(app, pool);
+  registerStaffRoutes(app, pool);
   const guard = requireStaff(pool);
+  const operatorGuard = requireStaff(pool, 'operator');
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof StaffManagementError) return reply.code(error.status).send({ code: error.code, message: error.message });
     if (error instanceof SubmissionRejectedError) return reply.code(422).send({ code: error.reason, message: error.message });
     if (error instanceof ScheduleConflictError) return reply.code(409).send({ code: 'schedule_conflict', message: error.message, conflicts: error.conflicts });
     if (error instanceof RevisionConflictError) return reply.code(409).send({ code: 'revision_conflict', message: error.message });
@@ -31,7 +47,10 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
     if (error instanceof NotFoundError) return reply.code(404).send({ code: 'not_found', message: error.message });
     if (error instanceof DataValidationError) return reply.code(422).send({ code: 'invalid', message: error.message });
     if (error && typeof error === 'object' && ('validation' in error || ('statusCode' in error && error.statusCode === 400))) return reply.code(400).send({ code: 'invalid', message: 'Проверьте данные запроса' });
-    app.log.error(error);
+    app.log.error({
+      requestId: request.id, method: request.method, route: request.routeOptions.url ?? '<unmatched>',
+      statusCode: 500, error: safeError(error),
+    }, 'server error');
     return reply.code(500).send({ code: 'server_error', message: 'Не удалось выполнить запрос' });
   });
 
@@ -58,7 +77,10 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
     const bucket = publicAttempts.get(request.ip) ?? { keys: new Map<string, number>(), times: [], lastSeen: now };
     bucket.times = bucket.times.filter(time => now - time < 60000);
     for (const [seenKey, seenAt] of bucket.keys) if (now - seenAt >= 60000) bucket.keys.delete(seenKey);
-    if (!bucket.keys.has(key) && bucket.times.length >= 10) return reply.code(429).send({ code: 'rate_limited', message: 'Слишком много заявок. Попробуйте позже.' });
+    if (!bucket.keys.has(key) && bucket.times.length >= 10) {
+      const retryAfter = Math.max(1, Math.ceil((bucket.times[0] + 60000 - now) / 1000));
+      return reply.header('Retry-After', String(retryAfter)).code(429).send({ code: 'rate_limited', message: 'Слишком много заявок. Попробуйте позже.' });
+    }
     if (!bucket.keys.has(key)) bucket.times.push(now);
     bucket.keys.set(key, now);
     bucket.lastSeen = now;
@@ -68,11 +90,11 @@ export function buildApp(pool: Pool, data: DataLayer = createDataLayer(pool, {
   });
 
   app.get('/api/admin/snapshot', { preHandler: guard }, async () => data.getAdminSnapshot({ from: new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()) }));
-  app.get<{ Querystring: { from?: string; to?: string; status?: AdminBooking['status']; cursor?: string; limit?: string } }>('/api/admin/bookings', { preHandler: guard }, async request => {
-    const { from, to, status, cursor, limit } = request.query;
-    return data.listAdminBookings({ from, to, status }, limit === undefined ? 50 : Number(limit), cursor);
+  app.get<{ Querystring: { from?: string; to?: string; status?: AdminBooking['status']; query?: string; categoryId?: string; serviceId?: string; cursor?: string; limit?: string } }>('/api/admin/bookings', { preHandler: guard }, async request => {
+    const { from, to, status, query, categoryId, serviceId, cursor, limit } = request.query;
+    return data.listAdminBookings({ from, to, status, query, categoryId, serviceId }, limit === undefined ? 50 : Number(limit), cursor);
   });
-  app.get<{ Querystring: { actorId?: string; entity?: string; beforeId?: string; limit?: string } }>('/api/admin/audit', { preHandler: guard }, async request => {
+  app.get<{ Querystring: { actorId?: string; entity?: string; beforeId?: string; limit?: string } }>('/api/admin/audit', { preHandler: operatorGuard }, async request => {
     const { actorId, entity, beforeId, limit } = request.query;
     return listAudit(pool, { actorId, entity, beforeId: beforeId ? Number(beforeId) : undefined, limit: limit ? Number(limit) : undefined });
   });
@@ -110,5 +132,5 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  void main().catch(error => { console.error(error); process.exitCode = 1; });
+  void main().catch(error => { console.error(JSON.stringify({ event: 'startup_error', error: safeError(error) })); process.exitCode = 1; });
 }

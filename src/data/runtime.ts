@@ -8,4 +8,5 @@ export const provider = useDemo ? demoProvider : api.provider;
 export const adminProvider = useDemo ? demoAdminProvider : api.adminProvider;
 export const auth = api.auth;
 export const listAudit = api.listAudit;
+export const staffManagement = api.staffManagement;
 export { RevisionConflictError, ScheduleConflictError, SubmissionRejectedError };

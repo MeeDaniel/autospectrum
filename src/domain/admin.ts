@@ -7,6 +7,7 @@ export type AdminBooking = {
   id: string; serviceId: string; date: string; startMinute: number; durationMinutes: number;
   name: string; phone: string; car: string; comment: string; status: BookingStatus; revision: number;
 };
+export type AdminBookingFilters = { from?: string; to?: string; status?: BookingStatus; query?: string; categoryId?: string; serviceId?: string };
 export type AdminSettings = { workStart: number; workEnd: number; breaks: Interval[]; weekdays?: Partial<Record<number, DaySchedule>>; exceptions?: Record<string, DaySchedule>; revision: number };
 export type AdminSnapshot = { categories: AdminCategory[]; services: AdminService[]; bookings: AdminBooking[]; settings: AdminSettings };
 export type CategoryInput = Omit<AdminCategory, 'id' | 'revision' | 'archived'> & { id?: string; revision?: number };

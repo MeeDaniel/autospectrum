@@ -67,16 +67,39 @@ describe('schedule rules', () => {
 });
 
 describe('public data operations', () => {
-  it('shows only half-hour slots from tomorrow through day 30 in Moscow', async () => {
+  it('shows half-hour slots from tomorrow through day 60 in Moscow', async () => {
     const { pool, calls } = fakePool();
     const data = createDataLayer(pool, { now: () => new Date('2026-10-12T09:00:00Z') });
     const availability = await data.getAvailability('oil', '2026-10');
     expect(availability.startDate).toBe('2026-10-13');
-    expect(availability.endDate).toBe('2026-11-11');
+    expect(availability.endDate).toBe('2026-12-11');
     expect(availability.days[0].date).toBe('2026-10-13');
     expect(availability.days[0].times.slice(0, 3)).toEqual(['09:00', '09:30', '10:00']);
     expect(availability.days.find(day => day.date === '2026-10-18')?.times).toEqual([]);
-    expect(calls.some(call => call.sql.startsWith('SELECT data FROM bookings WHERE') && call.values.includes('2026-10-13') && call.values.includes('2026-11-11'))).toBe(true);
+    expect(calls.some(call => call.sql.startsWith('SELECT data FROM bookings WHERE') && call.values.includes('2026-10-13') && call.values.includes('2026-12-11'))).toBe(true);
+    const lastMonth = await data.getAvailability('oil', '2026-12');
+    expect(lastMonth.days.at(-1)).toMatchObject({ date: '2026-12-11', times: expect.arrayContaining(['09:00', '09:30']) });
+    expect(lastMonth.days.some(day => day.date === '2026-12-12')).toBe(false);
+  });
+
+  it('accepts only dates inside the same availability window used for submission', async () => {
+    const { pool, state } = fakePool();
+    const data = createDataLayer(pool, { now: () => new Date('2026-10-27T20:59:59Z') });
+    const october = await data.getAvailability('oil', '2026-10');
+    const december = await data.getAvailability('oil', '2026-12');
+    expect(october.startDate).toBe('2026-10-28');
+    expect(december.endDate).toBe('2026-12-26');
+    expect(october.days.some(day => day.date === '2026-10-27')).toBe(false);
+    expect(october.days.find(day => day.date === '2026-10-28')?.times).toContain('10:00');
+    expect(december.days.find(day => day.date === '2026-12-26')?.times).toContain('10:00');
+    expect(december.days.some(day => day.date === '2026-12-27')).toBe(false);
+
+    const draft = { serviceId: 'oil', date: '', time: '10:00', name: 'B', phone: '9999999998', car: 'Car', comment: '' };
+    await expect(data.submit({ ...draft, date: '2026-10-27' }, 'window-today')).rejects.toMatchObject({ reason: 'unavailable' });
+    expect((await data.submit({ ...draft, date: '2026-10-28' }, 'window-tomorrow')).status).toBe('confirmed');
+    expect((await data.submit({ ...draft, date: '2026-12-26' }, 'window-day-60')).status).toBe('confirmed');
+    await expect(data.submit({ ...draft, date: '2026-12-27' }, 'window-day-61')).rejects.toMatchObject({ reason: 'unavailable' });
+    expect(state.bookings.map(booking => booking.date)).toEqual(['2026-10-28', '2026-12-26']);
   });
 
   it('serializes submit, returns overbooked for any schedule conflict, and replays the same key once', async () => {

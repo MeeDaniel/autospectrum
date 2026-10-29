@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { buildApp } from './app';
 import { createStaff } from './auth';
+import { setStaffRole } from './staff-management';
 import { createDataLayer } from './data';
 
 const connectionString = process.env.INTEGRATION_TEST_DATABASE_URL;
@@ -61,6 +62,7 @@ run('PostgreSQL integration', () => {
   it('requires a staff session and CSRF token for admin changes and records the actor', async () => {
     const login = `test-${randomUUID().slice(0, 8)}`;
     await createStaff(pool, login, 'integration-pass-123');
+    await setStaffRole(pool, login, 'operator');
     const signedIn = await app.inject({ method: 'POST', url: '/api/admin/login', payload: { login, password: 'integration-pass-123' } });
     expect(signedIn.statusCode).toBe(200);
     const cookie = String(signedIn.headers['set-cookie']).split(';')[0];

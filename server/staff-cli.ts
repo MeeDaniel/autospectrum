@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { Pool } from 'pg';
 import { blockStaff, createStaff, resetStaff } from './auth';
+import { setStaffRole, unblockStaff, validateStaffRole } from './staff-management';
 
 const [command, login, ...extra] = process.argv.slice(2);
-if (!['create', 'block', 'reset'].includes(command) || !login || extra.length) {
-  process.stderr.write('Usage: tsx server/staff-cli.ts <create|block|reset> <login>\nFor create/reset, provide the password on stdin.\n');
+if (!['create', 'block', 'reset', 'role', 'unblock'].includes(command) || !login || (command === 'role' ? extra.length !== 1 : extra.length !== 0)) {
+  process.stderr.write('Usage: tsx server/staff-cli.ts <create|block|reset|unblock> <login>\n       tsx server/staff-cli.ts role <login> <staff|operator>\nFor create/reset, provide the password on stdin.\n');
   process.exit(2);
 }
 
@@ -18,6 +19,12 @@ try {
   if (command === 'block') {
     await blockStaff(pool, login);
     process.stdout.write(`Blocked ${login}.\n`);
+  } else if (command === 'unblock') {
+    await unblockStaff(pool, login);
+    process.stdout.write(`Unblocked ${login}.\n`);
+  } else if (command === 'role') {
+    const account = await setStaffRole(pool, login, validateStaffRole(extra[0]));
+    process.stdout.write(`Role for ${account.login}: ${account.role}.\n`);
   } else {
     const password = readFileSync(0, 'utf8').replace(/\r?\n$/, '');
     if (command === 'create') {

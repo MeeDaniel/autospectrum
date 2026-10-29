@@ -1,8 +1,10 @@
 import type { AdminBooking, AdminCategory, AdminService, AdminSettings, AdminSnapshot, BookingInput, CategoryInput, Conflict, ServiceInput, SettingsInput } from '../domain/admin';
 import type { BookingDraft, SubmissionResult } from '../domain/booking';
 import { RevisionConflictError, ScheduleConflictError, SubmissionRejectedError, type AdminProvider, type BookingProvider } from './demo';
+import type { StaffAccount, StaffRole } from '../domain/staff';
+import { RateLimitError } from './rate-limit';
 
-type Staff = { id: string; login: string };
+type Staff = { id: string; login: string; role: StaffRole };
 type Session = { staff: Staff; csrfToken: string };
 type ApiErrorBody = { code?: string; message?: string; conflicts?: Conflict[] };
 
@@ -14,6 +16,7 @@ function randomKey(): string {
 
 export function createApiProviders() {
   let csrfToken: string | null = null;
+  const unauthorizedListeners = new Set<() => void>();
   let lastSubmission: { signature: string; key: string } | null = null;
   try { lastSubmission = JSON.parse(sessionStorage.getItem('autospectrum-idempotency') || 'null'); } catch { /* Memory-only key is enough when storage is unavailable. */ }
 
@@ -24,6 +27,16 @@ export function createApiProviders() {
     if (protectedWrite && csrfToken) headers.set('X-CSRF-Token', csrfToken);
     const response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
     if (!response.ok) {
+      if (path === '/api/bookings' && response.status === 429) {
+        const raw = response.headers.get('Retry-After');
+        const seconds = raw && /^[1-9]\d*$/.test(raw) ? Number(raw) : NaN;
+        throw new RateLimitError(Number.isSafeInteger(seconds) ? seconds : 60);
+      }
+      if (response.status === 401 && path !== '/api/admin/login') {
+        const wasAuthenticated = csrfToken !== null;
+        csrfToken = null;
+        if (wasAuthenticated) for (const listener of unauthorizedListeners) listener();
+      }
       let body: ApiErrorBody = {};
       try { body = await response.json() as ApiErrorBody; } catch { /* Error body may be empty. */ }
       if (body.code === 'unavailable' || body.code === 'invalid') throw new SubmissionRejectedError(body.code);
@@ -41,6 +54,7 @@ export function createApiProviders() {
   }
   const auth = {
     currentSession,
+    onUnauthorized(listener: () => void) { unauthorizedListeners.add(listener); return () => unauthorizedListeners.delete(listener); },
     async login(login: string, password: string): Promise<Session> {
       const session = await request<Session>('/api/admin/login', { method: 'POST', body: JSON.stringify({ login, password }) });
       csrfToken = session.csrfToken;
@@ -75,6 +89,9 @@ export function createApiProviders() {
       if (filters.from) params.set('from', filters.from);
       if (filters.to) params.set('to', filters.to);
       if (filters.status) params.set('status', filters.status);
+      if (filters.query) params.set('query', filters.query);
+      if (filters.categoryId) params.set('categoryId', filters.categoryId);
+      if (filters.serviceId) params.set('serviceId', filters.serviceId);
       if (cursor) params.set('cursor', cursor);
       return request(`/api/admin/bookings?${params}`);
     },
@@ -93,5 +110,11 @@ export function createApiProviders() {
       return () => clearInterval(interval);
     },
   };
-  return { provider, adminProvider, auth, listAudit: (filters?: { actorId?: string; entity?: string; limit?: number }) => request<unknown[]>(`/api/admin/audit?${new URLSearchParams(Object.entries(filters ?? {}).map(([key, value]) => [key, String(value)]))}`) };
+  const staffManagement = {
+    list: () => request<StaffAccount[]>('/api/admin/staff'),
+    create: (input: { login: string; password: string; role: StaffRole }) => post<StaffAccount>('/api/admin/staff', input),
+    update: (id: string, patch: { role?: StaffRole; blocked?: boolean }) => request<StaffAccount>(`/api/admin/staff/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }, true),
+    resetPassword: (id: string, password: string) => post<void>(`/api/admin/staff/${encodeURIComponent(id)}/password`, { password }),
+  };
+  return { provider, adminProvider, auth, staffManagement, listAudit: (filters?: { actorId?: string; entity?: string; limit?: number }) => request<unknown[]>(`/api/admin/audit?${new URLSearchParams(Object.entries(filters ?? {}).map(([key, value]) => [key, String(value)]))}`) };
 }

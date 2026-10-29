@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { adminProvider, ScheduleConflictError } from '../../data/runtime';
 import { assessBooking, parseMinute, validDate, validMinute, type AdminBooking, type AdminSnapshot, type BookingInput, type BookingStatus, type Conflict } from '../../domain/admin';
 import { filterBookings, type BookingFilters } from './section-model';
@@ -6,37 +6,61 @@ import { ActionBar, ConflictList, Field, Notice, Panel, confirmDiscard, isDirty,
 
 export const statusLabels: Record<BookingStatus, string> = { new: 'Новая', confirmed: 'Подтверждена', completed: 'Выполнена', cancelled: 'Отменена' };
 const blankFilters: BookingFilters = { query: '', date: '', status: '', categoryId: '', serviceId: '', conflictsOnly: false };
+type SelectedBooking = { key: string; initial: BookingInput; isNew: boolean; booking?: AdminBooking };
 function blankBooking(snapshot: AdminSnapshot): BookingInput {
   const service = snapshot.services.find(item => !item.archived && !snapshot.categories.find(category => category.id === item.categoryId)?.archived);
   return { serviceId: service?.id ?? '', date: moscowToday(), startMinute: snapshot.settings.workStart, durationMinutes: service?.durationMinutes ?? 30, name: '', phone: '', car: '', comment: '', status: 'new' };
 }
 
 export function BookingsSection({ snapshot, reload }: { snapshot: AdminSnapshot; reload: () => Promise<void> }) {
-  const [dateFrom, setDateFrom] = useState(moscowToday());
-  const [dateTo, setDateTo] = useState(moscowToday());
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [filters, setFilters] = useState<BookingFilters>(blankFilters);
-  const [selectedId, setSelectedId] = useState<string | 'new' | null>(null);
+  const [selected, setSelected] = useState<SelectedBooking | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
   const [pageCursor, setPageCursor] = useState<string | null>(null);
   const [cursorHistory, setCursorHistory] = useState<(string | null)[]>([]);
   const [bookingsPage, setBookingsPage] = useState<Awaited<ReturnType<typeof adminProvider.listBookings>> | null>(null);
+  const [listState, setListState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [listError, setListError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
+  const lastQuery = useRef(filters.query);
+  const requestGeneration = useRef(0);
+  const invalidatePage = () => { requestGeneration.current++; setBookingsPage(null); setListState('loading'); setListError(''); };
+  const resetPage = () => { invalidatePage(); setPageCursor(null); setCursorHistory([]); };
+  const retryPage = () => { invalidatePage(); setRetryKey(value => value + 1); };
   useEffect(() => {
     let current = true;
-    void adminProvider.listBookings({ from: dateFrom || undefined, to: dateTo || undefined, status: filters.status || undefined }, 50, pageCursor || undefined)
-      .then(result => { if (current) setBookingsPage(result); })
-      .catch(cause => { if (current) setError(messageOf(cause)); });
-    return () => { current = false; };
-  }, [snapshot, dateFrom, dateTo, filters.status, pageCursor]);
-  const viewSnapshot = useMemo(() => ({ ...snapshot, bookings: bookingsPage?.bookings ?? snapshot.bookings }), [snapshot, bookingsPage]);
-  const filtered = useMemo(() => filterBookings(viewSnapshot, filters), [viewSnapshot, filters]);
-  const selected = selectedId && selectedId !== 'new' ? viewSnapshot.bookings.find(item => item.id === selectedId) : undefined;
-  const open = (id: string | 'new') => { setError(''); setSuccess(''); setSelectedId(id); };
+    const generation = ++requestGeneration.current;
+    setBookingsPage(null);
+    setListState('loading');
+    setListError('');
+    const delay = lastQuery.current === filters.query ? 0 : 250;
+    lastQuery.current = filters.query;
+    const timer = setTimeout(() => {
+      void adminProvider.listBookings({ from: dateFrom || undefined, to: dateTo || undefined, status: filters.status || undefined,
+        query: filters.query.trim() || undefined, categoryId: filters.categoryId || undefined, serviceId: filters.serviceId || undefined }, 50, pageCursor || undefined)
+        .then(result => { if (current && generation === requestGeneration.current) { setBookingsPage(result); setListState('ready'); setListError(''); } })
+        .catch(cause => { if (current && generation === requestGeneration.current) { setListState('error'); setListError(messageOf(cause)); } });
+    }, delay);
+    return () => { current = false; clearTimeout(timer); };
+  }, [snapshot, dateFrom, dateTo, filters.status, filters.query, filters.categoryId, filters.serviceId, pageCursor, retryKey]);
+  const viewSnapshot = useMemo(() => ({ ...snapshot, bookings: bookingsPage?.bookings ?? [] }), [snapshot, bookingsPage]);
+  const filtered = useMemo(() => filters.conflictsOnly
+    ? filterBookings(viewSnapshot, { ...blankFilters, conflictsOnly: true })
+    : viewSnapshot.bookings, [viewSnapshot, filters.conflictsOnly]);
+  const open = (id: string | 'new', clearNotices = true) => {
+    const booking = id === 'new' ? undefined : viewSnapshot.bookings.find(item => item.id === id);
+    if (id !== 'new' && !booking) return;
+    if (clearNotices) { setError(''); setSuccess(''); }
+    setSelected({ key: id, initial: booking ?? blankBooking(snapshot), isNew: id === 'new', booking });
+  };
   const remove = async (booking: AdminBooking) => {
     if (!window.confirm(`Удалить запись ${booking.name} от ${booking.date} окончательно?`)) return;
     setBusy(true); setError('');
-    try { await adminProvider.deleteBooking(booking.id, booking.revision); await reload(); setSelectedId(null); setSuccess('Запись удалена.'); }
+    try { await adminProvider.deleteBooking(booking.id, booking.revision); await reload(); setSelected(null); setSuccess('Запись удалена.'); }
     catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
   };
@@ -44,27 +68,27 @@ export function BookingsSection({ snapshot, reload }: { snapshot: AdminSnapshot;
   return <div class="admin-stack">
     {error && <Notice kind="error">{error}</Notice>}{success && <Notice kind="success">{success}</Notice>}
     <Panel>
-      <div class="admin-section-top"><div><h2>Все заявки</h2><p>На странице {filtered.length} из {bookingsPage?.total ?? snapshot.bookings.length} записей</p></div><button class="button primary" type="button" onClick={() => open('new')}>+ Новая запись</button></div>
+      <div class="admin-section-top"><div><h2>Все заявки</h2><p>На странице {filtered.length} из {bookingsPage?.total ?? 0} записей</p></div><button class="button primary" type="button" onClick={() => open('new')}>+ Новая запись</button></div>
       <div class="admin-filters">
-        <Field label="Поиск"><input type="search" value={filters.query} placeholder="Имя, телефон или автомобиль" onInput={event => setFilters({ ...filters, query: event.currentTarget.value })} /></Field>
-        <Field label="С даты"><input type="date" value={dateFrom} onInput={event => { setDateFrom(event.currentTarget.value); setPageCursor(null); setCursorHistory([]); }} /></Field>
-        <Field label="По дату"><input type="date" value={dateTo} onInput={event => { setDateTo(event.currentTarget.value); setPageCursor(null); setCursorHistory([]); }} /></Field>
-        <Field label="Статус"><select value={filters.status} onChange={event => { setFilters({ ...filters, status: event.currentTarget.value as BookingStatus | '' }); setPageCursor(null); setCursorHistory([]); }}><option value="">Все статусы</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-        <Field label="Категория"><select value={filters.categoryId} onChange={event => setFilters({ ...filters, categoryId: event.currentTarget.value })}><option value="">Все категории</option>{snapshot.categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-        <Field label="Услуга"><select value={filters.serviceId} onChange={event => setFilters({ ...filters, serviceId: event.currentTarget.value })}><option value="">Все услуги</option>{snapshot.services.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        <Field label="Поиск"><input type="search" value={filters.query} placeholder="Имя, телефон или автомобиль" onInput={event => { const query = event.currentTarget.value; if (query !== filters.query) { setFilters({ ...filters, query }); resetPage(); } }} /></Field>
+        <Field label="С даты"><input type="date" value={dateFrom} onInput={event => { const value = event.currentTarget.value; if (value !== dateFrom) { setDateFrom(value); resetPage(); } }} /></Field>
+        <Field label="По дату"><input type="date" value={dateTo} onInput={event => { const value = event.currentTarget.value; if (value !== dateTo) { setDateTo(value); resetPage(); } }} /></Field>
+        <Field label="Статус"><select value={filters.status} onChange={event => { const status = event.currentTarget.value as BookingStatus | ''; if (status !== filters.status) { setFilters({ ...filters, status }); resetPage(); } }}><option value="">Все статусы</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+        <Field label="Категория"><select value={filters.categoryId} onChange={event => { const categoryId = event.currentTarget.value; if (categoryId !== filters.categoryId) { setFilters({ ...filters, categoryId }); resetPage(); } }}><option value="">Все категории</option>{snapshot.categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        <Field label="Услуга"><select value={filters.serviceId} onChange={event => { const serviceId = event.currentTarget.value; if (serviceId !== filters.serviceId) { setFilters({ ...filters, serviceId }); resetPage(); } }}><option value="">Все услуги</option>{snapshot.services.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
       </div>
-      <div class="admin-filter-extras"><button type="button" class="admin-text-button" onClick={() => { setDateFrom(moscowToday()); setDateTo(moscowToday()); setPageCursor(null); setCursorHistory([]); }}>Сегодня</button><button type="button" class="admin-text-button" onClick={() => { setDateFrom(''); setDateTo(''); setPageCursor(null); setCursorHistory([]); }}>За всё время</button><label class="admin-checkbox"><input type="checkbox" checked={filters.conflictsOnly} onChange={event => setFilters({ ...filters, conflictsOnly: event.currentTarget.checked })} /> Только конфликты</label></div>
+      <div class="admin-filter-extras"><button type="button" class="admin-text-button" onClick={() => { const today = moscowToday(); if (dateFrom !== today || dateTo !== today) { setDateFrom(today); setDateTo(today); resetPage(); } }}>Сегодня</button><button type="button" class="admin-text-button" onClick={() => { if (dateFrom || dateTo) { setDateFrom(''); setDateTo(''); resetPage(); } }}>За всё время</button><label class="admin-checkbox"><input type="checkbox" checked={filters.conflictsOnly} onChange={event => setFilters({ ...filters, conflictsOnly: event.currentTarget.checked })} /> Только конфликты</label></div>
     </Panel>
     <Panel className="admin-list-panel">
-      {filtered.length === 0 ? <div class="admin-empty">По выбранным условиям записей нет.</div> : <div class="admin-table-scroll"><table class="admin-table"><thead><tr><th>Дата и время</th><th>Клиент</th><th>Услуга</th><th>Статус</th><th>Расписание</th><th>Действие</th></tr></thead><tbody>{filtered.map(booking => {
+      {listState === 'error' ? <div class="admin-empty"><Notice kind="error">{listError}</Notice><button class="button secondary" type="button" onClick={retryPage}>Повторить загрузку</button></div> : listState === 'loading' ? <div class="admin-empty" role="status">Загружаем записи…</div> : filtered.length === 0 ? <div class="admin-empty">По выбранным условиям записей нет.</div> : <div class="admin-table-scroll"><table class="admin-table"><thead><tr><th>Дата и время</th><th>Клиент</th><th>Услуга</th><th>Статус</th><th>Расписание</th><th>Действие</th></tr></thead><tbody>{filtered.map(booking => {
         const service = snapshot.services.find(item => item.id === booking.serviceId);
         const category = snapshot.categories.find(item => item.id === service?.categoryId);
         const conflicts = bookingsPage?.conflicts[booking.id] ?? assessBooking(booking, viewSnapshot);
         return <tr key={booking.id}><td class="admin-cell-stacked" data-label="Дата и время"><strong>{booking.date}</strong><span>{safeTime(booking.startMinute)} · {booking.durationMinutes} мин</span></td><td class="admin-cell-stacked" data-label="Клиент"><strong>{booking.name}</strong><a href={`tel:${booking.phone}`}>{booking.phone}</a><span>{booking.car}</span></td><td class="admin-cell-stacked" data-label="Услуга"><strong>{service?.name ?? 'Удалена'}</strong><span>{category?.name ?? 'Без категории'}</span></td><td data-label="Статус"><span class={`admin-status status-${booking.status}`}>{statusLabels[booking.status]}</span></td><td data-label="Расписание">{conflicts.length ? <span class="admin-warning-count">⚠ {conflicts.length} конфликт(а)</span> : <span class="admin-ok">Без конфликтов</span>}</td><td data-label="Действие"><button class="admin-text-button" type="button" onClick={() => open(booking.id)}>Открыть →</button></td></tr>;
       })}</tbody></table></div>}
-      <div class="admin-filter-extras" style="padding: 1rem"><button type="button" class="admin-text-button" disabled={!cursorHistory.length} onClick={() => { setPageCursor(cursorHistory.at(-1) ?? null); setCursorHistory(cursorHistory.slice(0, -1)); }}>← Назад</button><button type="button" class="admin-text-button" disabled={!bookingsPage?.nextCursor} onClick={() => { setCursorHistory([...cursorHistory, pageCursor]); setPageCursor(bookingsPage!.nextCursor); }}>Далее →</button></div>
+      <div class="admin-filter-extras" style="padding: 1rem"><button type="button" class="admin-text-button" disabled={!cursorHistory.length} onClick={() => { invalidatePage(); setPageCursor(cursorHistory.at(-1) ?? null); setCursorHistory(cursorHistory.slice(0, -1)); }}>← Назад</button><button type="button" class="admin-text-button" disabled={!bookingsPage?.nextCursor} onClick={() => { invalidatePage(); setCursorHistory([...cursorHistory, pageCursor]); setPageCursor(bookingsPage!.nextCursor); }}>Далее →</button></div>
     </Panel>
-    {selectedId && (selectedId === 'new' || selected) && <BookingEditor key={selectedId} snapshot={viewSnapshot} initial={selected ?? blankBooking(snapshot)} isNew={selectedId === 'new'} busy={busy} setBusy={setBusy} error={error} onClose={() => setSelectedId(null)} onReload={reload} onRefresh={async () => { await reload(); setSelectedId(null); }} onDelete={selected ? () => void remove(selected) : undefined} onSaved={async () => { await reload(); setSelectedId(null); setSuccess('Запись сохранена.'); }} onOpenConflict={id => setSelectedId(id)} onError={setError} />}
+    {selected && <BookingEditor key={selected.key} snapshot={viewSnapshot} initial={selected.initial} isNew={selected.isNew} busy={busy} setBusy={setBusy} error={error} onClose={() => setSelected(null)} onReload={reload} onRefresh={async () => { await reload(); setSelected(null); }} onDelete={selected.booking ? () => void remove(selected.booking!) : undefined} onSaved={async () => { await reload(); setSelected(null); setSuccess('Запись сохранена.'); }} onOpenConflict={id => open(id, false)} onError={setError} />}
   </div>;
 }
 

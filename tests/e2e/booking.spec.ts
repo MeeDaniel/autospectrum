@@ -73,7 +73,7 @@ test('a visitor reviews and submits a confirmed booking', async ({ page }) => {
   await expect(page.getByText('Лада Гранта')).toBeVisible();
   await page.getByRole('button', { name: 'Отправить' }).click();
   await expect(page).toHaveURL(/#\/result$/);
-  await expect(page.getByText('Вы записаны')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Тестовая заявка сохранена' })).toBeVisible();
   await page.getByRole('button', { name: 'ОК' }).click();
   await expect(page.getByLabel('Ваше имя')).toHaveValue('Иван');
   await expect(page.getByLabel('Автомобиль')).toHaveValue('Лада Гранта');
@@ -132,7 +132,7 @@ test('a saved overloaded request shows a warning and keeps contact details', asy
   });
   await page.getByRole('button', { name: 'Отправить' }).click();
   await expect(page).toHaveURL(/#\/result$/);
-  await expect(page.getByText(/Заявка принята\. На это время много записей/)).toBeVisible();
+  await expect(page.getByText(/Тестовая заявка сохранена только в этом браузере\. На это время много записей — возможен перенос/)).toBeVisible();
   await expect(page.getByText('Вы записаны')).toHaveCount(0);
   await page.getByRole('button', { name: 'ОК' }).click();
   await expect(page.getByLabel('Ваше имя')).toHaveValue('Анна');
@@ -187,7 +187,7 @@ test('browser back after submission cannot send the same booking again', async (
   await expect(page).toHaveURL(/#\/result$/);
   await page.goBack();
   await expect(page.getByRole('button', { name: 'Отправить' })).toHaveCount(0);
-  await expect(page.getByText('Вы записаны')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Тестовая заявка сохранена' })).toBeVisible();
 });
 
 test('a screen change moves keyboard focus to its heading', async ({ page }) => {

@@ -1,7 +1,8 @@
 import type { Availability, BookingDraft, Service, SubmissionResult } from '../domain/booking';
 import { normalizePhone, validateDraft } from '../domain/booking';
+import { bookingWindow, isBookableDate } from '../domain/booking-window';
 import { assessBooking, formatMinute, parseMinute, validDate, validMinute, validateSettings } from '../domain/admin';
-import type { AdminBooking, AdminCategory, AdminService, AdminSettings, AdminSnapshot, BookingInput, CategoryInput, Conflict, ServiceInput, SettingsInput } from '../domain/admin';
+import type { AdminBooking, AdminBookingFilters, AdminCategory, AdminService, AdminSettings, AdminSnapshot, BookingInput, CategoryInput, Conflict, ServiceInput, SettingsInput } from '../domain/admin';
 import { copyDemoValue, IndexedDbDemoStore, type DemoStore } from './store';
 
 export { MemoryDemoStore, IndexedDbDemoStore } from './store';
@@ -16,7 +17,7 @@ export interface BookingProvider {
 
 export interface AdminProvider {
   getSnapshot(): Promise<AdminSnapshot>;
-  listBookings(filters?: { from?: string; to?: string; status?: AdminBooking['status'] }, limit?: number, cursor?: string): Promise<{ bookings: AdminBooking[]; total: number; nextCursor: string | null; conflicts: Record<string, Conflict[]> }>;
+  listBookings(filters?: AdminBookingFilters, limit?: number, cursor?: string): Promise<{ bookings: AdminBooking[]; total: number; nextCursor: string | null; conflicts: Record<string, Conflict[]> }>;
   previewBooking(input: BookingInput): Promise<Conflict[]>;
   saveBooking(input: BookingInput, allowConflicts?: boolean): Promise<AdminBooking>;
   deleteBooking(id: string, revision: number): Promise<void>;
@@ -51,16 +52,6 @@ function id(): string {
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-function todayInMoscow(now = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
-  const value = (type: string) => parts.find(part => part.type === type)!.value;
-  return `${value('year')}-${value('month')}-${value('day')}`;
-}
-function minuteInMoscow(now = new Date()): number {
-  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
-  const value = (type: string) => Number(parts.find(part => part.type === type)!.value);
-  return value('hour') * 60 + value('minute');
 }
 function addDays(date: string, days: number): string {
   const utc = new Date(`${date}T12:00:00Z`);
@@ -102,7 +93,14 @@ export function createDemoProviders(store: DemoStore): { provider: BookingProvid
   const adminProvider: AdminProvider = {
     async listBookings(filters = {}, limit = 50, cursor) {
       const snapshot = await store.read();
-      const rows = snapshot.bookings.filter(item => (!filters.from || item.date >= filters.from) && (!filters.to || item.date <= filters.to) && (!filters.status || item.status === filters.status))
+      const query = filters.query?.trim().toLocaleLowerCase('ru');
+      const rows = snapshot.bookings.filter(item => {
+        const service = snapshot.services.find(value => value.id === item.serviceId);
+        return (!filters.from || item.date >= filters.from) && (!filters.to || item.date <= filters.to) && (!filters.status || item.status === filters.status)
+          && (!filters.serviceId || item.serviceId === filters.serviceId)
+          && (!filters.categoryId || service?.categoryId === filters.categoryId)
+          && (!query || [item.name, item.phone, item.car].some(value => value.toLocaleLowerCase('ru').includes(query)));
+      })
         .sort((a, b) => b.date.localeCompare(a.date) || b.startMinute - a.startMinute || b.id.localeCompare(a.id));
       const offset = cursor ? Number(cursor) : 0;
       const bookings = rows.slice(offset, offset + limit);
@@ -218,17 +216,12 @@ export function createDemoProviders(store: DemoStore): { provider: BookingProvid
       const service = snapshot.services.find(item => item.id === serviceId);
       const category = snapshot.categories.find(item => item.id === service?.categoryId);
       if (!service || service.archived || !category || category.archived) throw new Error('Услуга не найдена');
-      const now = new Date();
-      const startDate = todayInMoscow(now);
-      const currentMinute = minuteInMoscow(now);
-      const endDate = addDays(startDate, 29);
+      const { startDate, endDate } = bookingWindow(new Date());
       const days: Availability['days'] = [];
-      for (let offset = 0; offset < 30; offset++) {
-        const date = addDays(startDate, offset);
+      for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
         if (!date.startsWith(month)) continue;
         const times: string[] = [];
         for (let minute = snapshot.settings.workStart; minute + service.durationMinutes <= snapshot.settings.workEnd && minute + service.durationMinutes <= 1439; minute += 30) {
-          if (date === startDate && minute <= currentMinute) continue;
           const candidate: BookingInput = { serviceId, date, startMinute: minute, durationMinutes: service.durationMinutes, name: '', phone: '', car: '', comment: '', status: 'new' };
           if (assessBooking(candidate, snapshot).length === 0) times.push(formatMinute(minute));
         }
@@ -244,10 +237,7 @@ export function createDemoProviders(store: DemoStore): { provider: BookingProvid
         if (!service || service.archived || !category || category.archived) throw new SubmissionRejectedError('invalid');
         let minute: number;
         try { minute = parseMinute(draft.time); } catch { throw new SubmissionRejectedError('unavailable'); }
-        const now = new Date();
-        const today = todayInMoscow(now);
-        const last = addDays(today, 29);
-        if (!validDate(draft.date) || draft.date < today || draft.date > last || (draft.date === today && minute <= minuteInMoscow(now)) || minute < snapshot.settings.workStart || (minute - snapshot.settings.workStart) % 30 !== 0 || minute + service.durationMinutes > snapshot.settings.workEnd || minute + service.durationMinutes > 1439) throw new SubmissionRejectedError('unavailable');
+        if (!validDate(draft.date) || !isBookableDate(draft.date, bookingWindow(new Date())) || minute < snapshot.settings.workStart || (minute - snapshot.settings.workStart) % 30 !== 0 || minute + service.durationMinutes > snapshot.settings.workEnd || minute + service.durationMinutes > 1439) throw new SubmissionRejectedError('unavailable');
         const candidate: BookingInput = { serviceId: draft.serviceId, date: draft.date, startMinute: minute, durationMinutes: service.durationMinutes, name: draft.name.trim(), phone: normalizePhone(draft.phone), car: draft.car.trim(), comment: draft.comment, status: 'new' };
         const conflicts = assessBooking(candidate, snapshot);
         if (conflicts.some(conflict => conflict.kind !== 'capacity')) throw new SubmissionRejectedError('unavailable');

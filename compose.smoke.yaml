@@ -1,0 +1,81 @@
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: autospectrum_smoke
+      POSTGRES_USER: smoke
+      POSTGRES_PASSWORD: ${SMOKE_DB_PASSWORD:?SMOKE_DB_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smoke -d autospectrum_smoke"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [internal]
+
+  migrate:
+    image: ${SMOKE_API_IMAGE:?SMOKE_API_IMAGE is required}
+    build:
+      context: .
+      target: api
+    environment: &api_environment
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgresql://smoke:${SMOKE_DB_PASSWORD}@db:5432/autospectrum_smoke
+    command: ["npm", "run", "server:migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+    restart: "no"
+
+  api:
+    image: ${SMOKE_API_IMAGE}
+    build:
+      context: .
+      target: api
+    environment: *api_environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/readyz').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [internal]
+
+  web:
+    image: ${SMOKE_WEB_IMAGE:?SMOKE_WEB_IMAGE is required}
+    build:
+      context: .
+      target: web
+    environment:
+      DOMAIN: localhost
+      NGINX_ENVSUBST_FILTER: "^DOMAIN$"
+    ports:
+      - "127.0.0.1:${SMOKE_HTTP_PORT:?SMOKE_HTTP_PORT is required}:80"
+      - "127.0.0.1:${SMOKE_HTTPS_PORT:?SMOKE_HTTPS_PORT is required}:443"
+    volumes:
+      - type: bind
+        source: ${SMOKE_CERT_DIR:?SMOKE_CERT_DIR is required}
+        target: /etc/letsencrypt/live/localhost
+        read_only: true
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [public, internal]
+
+networks:
+  public:
+  internal:
+    internal: true
+
+volumes:
+  postgres_data:

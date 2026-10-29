@@ -51,7 +51,7 @@ describe('audit record', () => {
 
 describe('staff guard', () => {
   const token = 'a'.repeat(64);
-  const staffRow = { id: 'staff-1', login: 'desk', csrf_hash: 'ignored' };
+  const staffRow = { id: 'staff-1', login: 'desk', role: 'staff' as const, csrf_hash: 'ignored' };
 
   function harness(row: typeof staffRow | undefined, method = 'GET', csrfHeader?: string) {
     const db = { async query() { return { rows: row ? [row] : [] }; } };
@@ -78,7 +78,7 @@ describe('staff guard', () => {
     const { db, request, reply } = harness(staffRow);
     await requireStaff(db as never).call({} as never, request as never, reply as never, (() => {}) as never);
     expect(reply.statusCode).toBe(200);
-    expect(request.staff).toEqual({ id: 'staff-1', login: 'desk' });
+    expect(request.staff).toEqual({ id: 'staff-1', login: 'desk', role: 'staff' });
   });
 });
 
@@ -91,12 +91,12 @@ describe('admin authentication routes', () => {
       release() {},
       async query(sql: string, values: unknown[] = []): Promise<{ rows: Record<string, unknown>[] }> {
         if (sql.startsWith('SELECT count(')) return { rows: [{ total: '0' }] };
-        if (sql.startsWith('SELECT id, login, password_hash')) return { rows: [{ id: 'staff-1', login: 'desk', password_hash: passwordHash }] };
+        if (sql.startsWith('SELECT id, login, role, password_hash')) return { rows: [{ id: 'staff-1', login: 'desk', role: 'staff', password_hash: passwordHash }] };
         if (sql.startsWith('INSERT INTO staff_sessions')) {
           session = { token_hash: values[0] as string, csrf_hash: values[2] as string, csrf_token: values[3] as string };
         }
-        if (sql.startsWith('SELECT u.id, u.login, s.csrf_hash') && session && values[0] === session.token_hash) {
-          return { rows: [{ id: 'staff-1', login: 'desk', csrf_hash: session.csrf_hash, csrf_token: session.csrf_token }] };
+        if (sql.startsWith('SELECT u.id, u.login, u.role, s.csrf_hash') && session && values[0] === session.token_hash) {
+          return { rows: [{ id: 'staff-1', login: 'desk', role: 'staff', csrf_hash: session.csrf_hash, csrf_token: session.csrf_token }] };
         }
         if (sql.startsWith('UPDATE staff_sessions')) session = undefined;
         return { rows: [] };
@@ -113,7 +113,7 @@ describe('admin authentication routes', () => {
     expect(cookie).toContain('Max-Age=43200');
     const csrfToken = login.json().csrfToken;
     const me = await app.inject({ method: 'GET', url: '/api/admin/me', headers: { cookie } });
-    expect(me.json()).toEqual({ staff: { id: 'staff-1', login: 'desk' }, csrfToken });
+    expect(me.json()).toEqual({ staff: { id: 'staff-1', login: 'desk', role: 'staff' }, csrfToken });
     const rejected = await app.inject({ method: 'POST', url: '/api/admin/logout', headers: { cookie } });
     expect(rejected.statusCode).toBe(403);
     const logout = await app.inject({ method: 'POST', url: '/api/admin/logout', headers: { cookie, 'x-csrf-token': csrfToken } });
@@ -129,7 +129,7 @@ describe('admin authentication routes', () => {
       async connect() { return this; }, release() {},
       async query(sql: string) {
         if (sql.startsWith('SELECT count(')) return { rows: [{ total: String(failures) }] };
-        if (sql.startsWith('SELECT id, login, password_hash')) return { rows: [] };
+        if (sql.startsWith('SELECT id, login, role, password_hash')) return { rows: [] };
         if (sql.startsWith('INSERT INTO staff_login_attempts')) failures++;
         return { rows: [] };
       },
@@ -156,7 +156,7 @@ describe('staff account maintenance', () => {
     };
     const staff = await createStaff(db as never, '  Desk ', 'a very long staff password');
     const inserted = statements.find(entry => entry.sql.startsWith('INSERT INTO staff_users'))!;
-    expect(staff).toEqual({ id: inserted.values[0], login: 'desk' });
+    expect(staff).toEqual({ id: inserted.values[0], login: 'desk', role: 'staff', blocked: false });
     expect(inserted.values[1]).toBe('desk');
     expect(await verifyPassword('a very long staff password', inserted.values[2] as string)).toBe(true);
     expect(statements.at(-1)?.sql).toBe('COMMIT');
@@ -166,7 +166,7 @@ describe('staff account maintenance', () => {
     const statements: string[] = [];
     const db = {
       async connect() { return this; }, release() {},
-      async query(sql: string) { statements.push(sql); return { rows: [{ id: 'staff-1' }] }; },
+      async query(sql: string) { statements.push(sql); return { rows: [{ id: 'staff-1', login: 'desk', role: 'staff', blocked_at: null }] }; },
     };
     await blockStaff(db as never, 'desk');
     expect(statements.some(sql => sql.startsWith('UPDATE staff_users SET blocked_at'))).toBe(true);

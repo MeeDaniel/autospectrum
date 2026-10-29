@@ -6,3 +6,4 @@
 @media(max-width:38rem){.admin-item-actions{display:grid;grid-template-columns:minmax(0,1fr)}.admin-item-actions button{min-width:0;max-width:100%;overflow-wrap:anywhere}.admin-catalog-item,.admin-catalog-head,.admin-kicker{min-width:0}.admin-catalog-head{flex-wrap:wrap}.admin-kicker{overflow-wrap:anywhere}}
 @media(max-width:38rem){.admin-form-grid>.button{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}}
 @media(max-width:38rem){.admin-panel h2,.admin-panel h3,.admin-panel p{overflow-wrap:anywhere}}
+.admin-staff-list-head{padding:1.5rem 1.25rem 0}.admin-staff-actions{display:flex;gap:.7rem;flex-wrap:wrap}.admin-staff-reset{display:grid;gap:.6rem;min-width:13rem;margin-top:.8rem}.admin-staff-reset .button{justify-self:start}.admin-table td>select{min-height:2.5rem;border:1px solid #dfe2e5;border-radius:.55rem;background:#fafafa;padding:.35rem .55rem;font:inherit}
